@@ -85,19 +85,16 @@ func userIndexKey(userID string) string   { return "wechat-" + userID }
 // store on first access.
 func (m *SessionManager) user(ctx context.Context, userID string) *userSessions {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	us, ok := m.users[userID]
 	if !ok {
 		us = &userSessions{userID: userID, live: make(map[string]*Session)}
-		m.users[userID] = us
-	}
-	m.mu.Unlock()
-
-	if !ok {
+		// Hydrate the index before publishing us into the map, so concurrent
+		// callers never observe an un-hydrated session and race on us.index.
 		if data, err := m.store.GetMeta(ctx, userIndexKey(userID)); err == nil && len(data) > 0 {
-			us.mu.Lock()
 			_ = json.Unmarshal(data, &us.index)
-			us.mu.Unlock()
 		}
+		m.users[userID] = us
 	}
 	return us
 }
