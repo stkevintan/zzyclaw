@@ -30,7 +30,6 @@ func SkillTools(mgr *skill.Manager, owners []string) []tools.Tool {
 		&listSkillsTool{mgr: mgr},
 		&loadSkillTool{mgr: mgr},
 		&unloadSkillTool{mgr: mgr},
-		&refreshSkillsTool{mgr: mgr},
 		&createSkillTool{mgr: mgr, owners: ownerSet},
 		&deleteSkillTool{mgr: mgr, owners: ownerSet},
 	}
@@ -140,28 +139,6 @@ func (t *unloadSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	delete(sess.ActiveSkills, a.Name)
 	return fmt.Sprintf("Unloaded skill %q.", a.Name), nil
-}
-
-// refreshSkillsTool re-reads the on-disk skills directories (shared and the
-// caller's own) so changes made outside the skill tools — e.g. a SKILL.md
-// edited or a skill folder dropped in directly — are picked up. Builtins are
-// compiled in and always present.
-type refreshSkillsTool struct{ mgr *skill.Manager }
-
-func (t *refreshSkillsTool) Name() string { return "refresh_skills" }
-func (t *refreshSkillsTool) Description() string {
-	return "Re-scan the skills directories from disk and update the in-memory registry, picking up skills that were added, edited or removed outside the skill tools (e.g. files dropped into a skills directory). Use this when a skill should exist but does not appear in list_skills."
-}
-func (t *refreshSkillsTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{}}`)
-}
-func (t *refreshSkillsTool) Dangerous(context.Context, json.RawMessage) bool { return false }
-func (t *refreshSkillsTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
-	userID := userIDFromContext(ctx)
-	if err := t.mgr.Reload(userID); err != nil {
-		return "", fmt.Errorf("refresh skills: %w", err)
-	}
-	return fmt.Sprintf("Refreshed skills from disk. %d skill(s) now available.", len(t.mgr.List(userID))), nil
 }
 
 // createSkillTool persists a skill as a self-contained folder (SKILL.md plus an

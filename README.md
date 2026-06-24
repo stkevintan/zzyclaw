@@ -51,7 +51,7 @@ Built-in tools registered in [main.go](main.go):
 | `run_shell` | Build/run/lint/test commands (owner-gated, per-command checked) |
 | `http_get` | Fetch URLs; pre-trusted hosts are allowlisted, others are approval-gated and can be remembered |
 | `run_skill` | Execute a skill's code in the Deno sandbox |
-| `list_skills`, `load_skill`, `unload_skill`, `refresh_skills`, `create_skill`, `delete_skill` | Skill management |
+| `list_skills`, `load_skill`, `unload_skill`, `create_skill`, `delete_skill` | Skill management |
 
 Key safety mechanics:
 
@@ -122,8 +122,6 @@ file tools — so files always land in the right place
   (`builtin` / `shared` / `private`) and whether it is loaded.
 - `load_skill` / `unload_skill` — pull a skill's full instructions into (or out
   of) the current conversation.
-- `refresh_skills` — re-scan the shared and per-user skills directories from disk
-  to pick up skills added, edited or removed outside the skill tools.
 - `create_skill` — author a new skill folder (`SKILL.md` + optional entry file).
   Pass `shared: true` (owners only) to publish it to the shared registry for all
   users instead of your private directory.
