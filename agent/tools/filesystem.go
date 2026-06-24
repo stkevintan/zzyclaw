@@ -158,7 +158,7 @@ func (t *writeFileTool) Execute(_ context.Context, args json.RawMessage) (string
 			return "", fmt.Errorf("open file: %w", err)
 		}
 		if _, err := f.WriteString(a.Content); err != nil {
-			f.Close()
+			_ = f.Close()
 			return "", fmt.Errorf("append file: %w", err)
 		}
 		if err := f.Close(); err != nil {
@@ -220,7 +220,7 @@ func (t *editFileTool) Execute(_ context.Context, args json.RawMessage) (string,
 	if count > 1 && !a.ReplaceAll {
 		return "", fmt.Errorf("old_string matches %d locations in %s; add more context to make it unique or set replace_all", count, a.Path)
 	}
-	updated := content
+	var updated string
 	if a.ReplaceAll {
 		updated = strings.ReplaceAll(content, a.OldString, a.NewString)
 	} else {
