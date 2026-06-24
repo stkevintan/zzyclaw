@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"zzy/agent/skill"
 	"zzy/agent/tools"
@@ -150,6 +151,14 @@ func (e *Engine) loop(ctx context.Context, sess *Session, messages []copilot.Mes
 			return Outcome{}, err
 		}
 
+		// When log.level=debug, dump the model's completion (final text and/or the
+		// tool calls it wants to make) so a turn can be traced step by step.
+		slog.Debug("agent completion",
+			"iter", iter,
+			"content", res.Content,
+			"tool_calls", toolCallsLog(res.ToolCalls),
+		)
+
 		if len(res.ToolCalls) == 0 {
 			messages = append(messages, copilot.Message{Role: roleAssistant, Content: res.Content})
 			e.persist(ctx, sess, messages)
@@ -224,14 +233,33 @@ func (e *Engine) ownerAllowed(sess *Session) bool {
 
 // exec runs a tool with the session injected into the context.
 func (e *Engine) exec(ctx context.Context, sess *Session, tool tools.Tool, call copilot.ToolCall) string {
+	slog.Debug("tool call", "tool", call.Function.Name, "args", call.Function.Arguments)
 	out, err := tool.Execute(withSession(ctx, sess), json.RawMessage(call.Function.Arguments))
 	if err != nil {
+		slog.Debug("tool result", "tool", call.Function.Name, "error", err.Error())
 		return "Error: " + err.Error()
 	}
+	slog.Debug("tool result", "tool", call.Function.Name, "output", out)
 	if strings.TrimSpace(out) == "" {
 		return "(no output)"
 	}
 	return out
+}
+
+// toolCallsLog renders tool calls as compact JSON for debug logging. It
+// implements slog.LogValuer so the marshaling is deferred until slog actually
+// emits the record (i.e. only when debug logging is enabled).
+type toolCallsLog []copilot.ToolCall
+
+func (c toolCallsLog) LogValue() slog.Value {
+	if len(c) == 0 {
+		return slog.StringValue("")
+	}
+	b, err := json.Marshal([]copilot.ToolCall(c))
+	if err != nil {
+		return slog.StringValue(fmt.Sprintf("%v", []copilot.ToolCall(c)))
+	}
+	return slog.StringValue(string(b))
 }
 
 // fullMessages prepends the dynamic system prompt to the conversation.
