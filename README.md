@@ -13,8 +13,8 @@ served through the GitHub Copilot API.
 ## Features
 
 - **ReAct agent** — multi-step reason → act → observe loop over a tool registry.
-- **Skill management** — self-contained, disk-backed skills the agent can list,
-  load, create, and delete at runtime without recompiling.
+- **Skill management** — self-contained, pluggable skills loaded at runtime:
+  builtin, owner-shared, and isolated per user.
 - **Deno-based sandbox** — user-authored skill code executes in Deno with
   deny-by-default permissions (no env, no subprocess, no FFI, no remote imports).
 - **Pluggable memory** — Redis-backed conversation memory, or in-memory when no
