@@ -65,8 +65,12 @@ Key safety mechanics:
   decisions are stored **per user** in the shared store (Redis when configured,
   otherwise process-local) so equivalent calls skip the prompt: `http_get` is
   remembered per host (growing the allowlist on demand), and file
-  writes/edits/deletes are remembered per workspace directory. One user's grants
+  writes/edits/deletes are remembered per directory. One user's grants
   never apply to another.
+- **Workspace is writable by default** — file writes/edits/deletes inside the
+  agent **workspace root** are pre-approved and never prompt; the gate (and the
+  remembered-approval flow above) only applies to mutations outside it, such as
+  the skills directory.
 - **Bounded loops** — `max_iterations` caps reasoning steps per turn and
   `max_history` caps stored messages per session.
 

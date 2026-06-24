@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -61,6 +63,30 @@ func TestDangerFlags(t *testing.T) {
 	for tool, want := range cases {
 		if got := tool.Dangerous(nil); got != want {
 			t.Errorf("%s.Dangerous()=%v, want %v", tool.Name(), got, want)
+		}
+	}
+}
+
+func TestWorkspaceWritesArePreApproved(t *testing.T) {
+	workspace := t.TempDir()
+	skills := t.TempDir()
+	// roots[0] is the workspace (pre-approved); roots[1] is the skills dir (gated).
+	sb, err := NewSandbox(workspace, skills)
+	if err != nil {
+		t.Fatalf("NewSandbox: %v", err)
+	}
+
+	mutators := []Tool{NewWriteFile(sb), NewEditFile(sb), NewDeletePath(sb)}
+	for _, tool := range mutators {
+		// A path inside the workspace must not require approval.
+		if tool.Dangerous(json.RawMessage(`{"path":"notes.txt"}`)) {
+			t.Errorf("%s: workspace write should be pre-approved", tool.Name())
+		}
+		// A path inside the skills directory must still be gated.
+		skillPath := filepath.Join(skills, "evil", "SKILL.md")
+		args := json.RawMessage(`{"path":` + strconv.Quote(skillPath) + `}`)
+		if !tool.Dangerous(args) {
+			t.Errorf("%s: skills-dir write should require approval", tool.Name())
 		}
 	}
 }

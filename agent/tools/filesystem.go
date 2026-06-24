@@ -80,6 +80,32 @@ func grantScopeForPath(sb *Sandbox, rawPath string) (key, label string, ok bool)
 	return "fs_write:" + dir, "file changes under " + dir, true
 }
 
+// inWorkspace reports whether abs lies within the primary workspace root
+// (roots[0]). The workspace is the agent's scratch area and is writable without
+// approval; other roots (e.g. the skills directory) stay approval-gated.
+func (s *Sandbox) inWorkspace(abs string) bool {
+	root := s.roots[0]
+	return abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator))
+}
+
+// mutationNeedsApproval reports whether a filesystem mutation described by args
+// (which carry a "path" field) requires approval. Mutations inside the workspace
+// root are pre-approved by default; anything else (the skills directory, or an
+// unresolved/out-of-sandbox path) still goes through the approval gate.
+func mutationNeedsApproval(sb *Sandbox, args json.RawMessage) bool {
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil || a.Path == "" {
+		return true
+	}
+	abs, err := sb.resolve(a.Path)
+	if err != nil {
+		return true
+	}
+	return !sb.inWorkspace(abs)
+}
+
 // --- read_file ---
 
 type readFileTool struct{ sb *Sandbox }
@@ -147,7 +173,11 @@ func (t *writeFileTool) Description() string {
 func (t *writeFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"content":{"type":"string","description":"Text content to write (or append)."},"append":{"type":"boolean","description":"If true, append to the file instead of overwriting it."}},"required":["path","content"]}`)
 }
-func (t *writeFileTool) Dangerous(json.RawMessage) bool { return true }
+// Dangerous gates writes outside the workspace (e.g. the skills directory);
+// writes within the workspace root are pre-approved.
+func (t *writeFileTool) Dangerous(args json.RawMessage) bool {
+	return mutationNeedsApproval(t.sb, args)
+}
 
 // GrantScope remembers approval per target directory (see grantScopeForPath).
 func (t *writeFileTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
@@ -224,7 +254,11 @@ func (t *editFileTool) Description() string {
 func (t *editFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"old_string":{"type":"string","description":"Exact text to find. Include enough surrounding context to match a single location."},"new_string":{"type":"string","description":"Replacement text."},"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring exactly one match."}},"required":["path","old_string","new_string"]}`)
 }
-func (t *editFileTool) Dangerous(json.RawMessage) bool { return true }
+// Dangerous gates edits outside the workspace (e.g. the skills directory);
+// edits within the workspace root are pre-approved.
+func (t *editFileTool) Dangerous(args json.RawMessage) bool {
+	return mutationNeedsApproval(t.sb, args)
+}
 
 // GrantScope remembers approval per target directory (see grantScopeForPath).
 func (t *editFileTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
@@ -352,7 +386,11 @@ func (t *deletePathTool) Description() string {
 func (t *deletePathTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to delete, relative to the workspace root."}},"required":["path"]}`)
 }
-func (t *deletePathTool) Dangerous(json.RawMessage) bool { return true }
+// Dangerous gates deletions outside the workspace (e.g. the skills directory);
+// deletions within the workspace root are pre-approved.
+func (t *deletePathTool) Dangerous(args json.RawMessage) bool {
+	return mutationNeedsApproval(t.sb, args)
+}
 
 // GrantScope remembers approval per target directory (see grantScopeForPath).
 func (t *deletePathTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
