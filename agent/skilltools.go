@@ -164,7 +164,6 @@ func (t *refreshSkillsTool) Execute(ctx context.Context, _ json.RawMessage) (str
 	return fmt.Sprintf("Refreshed skills from disk. %d skill(s) now available.", len(t.mgr.List(userID))), nil
 }
 
-
 // createSkillTool persists a skill as a self-contained folder (SKILL.md plus an
 // optional Deno entry file) in the calling user's own skills directory. It is
 // the supported way to author skills, so the files reliably land in the registry
