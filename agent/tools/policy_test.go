@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func TestNeverAutoApprove(t *testing.T) {
+	for _, name := range []string{"run_shell", "run_skill"} {
+		if !NeverAutoApprove(name) {
+			t.Errorf("%s must be barred from blanket auto-approve", name)
+		}
+	}
+	if NeverAutoApprove("read_file") {
+		t.Error("read_file should be auto-approvable")
+	}
+}
+
 func TestScanDangerousBlocks(t *testing.T) {
 	bad := []string{
 		"rm -rf /",

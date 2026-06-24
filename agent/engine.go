@@ -255,7 +255,7 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 				continue
 			}
 			// A previously remembered ("always") grant for this scope skips the prompt.
-			grantKey, grantLabel := grantScope(tool, args)
+			grantKey, grantLabel := grantScope(e.toolCtx(ctx, sess), tool, args)
 			if grantKey != "" && e.grants.Allowed(ctx, sess.UserID, grantKey) {
 				result := e.exec(ctx, sess, tool, call)
 				messages = append(messages, toolResult(call.ID, result))
@@ -283,12 +283,12 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 
 // grantScope returns the persistable approval scope for a tool call, or empty
 // strings when the tool doesn't support remembered approvals.
-func grantScope(tool tools.Tool, args json.RawMessage) (key, label string) {
+func grantScope(ctx context.Context, tool tools.Tool, args json.RawMessage) (key, label string) {
 	g, ok := tool.(tools.Grantable)
 	if !ok {
 		return "", ""
 	}
-	k, l, ok := g.GrantScope(args)
+	k, l, ok := g.GrantScope(ctx, args)
 	if !ok {
 		return "", ""
 	}
