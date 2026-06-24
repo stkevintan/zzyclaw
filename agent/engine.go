@@ -22,7 +22,14 @@ const (
 type EngineConfig struct {
 	MaxIterations int
 	MaxHistory    int
-	AutoApprove   []string
+	// CompactThreshold is the stored-history length (in messages) past which a
+	// completed turn triggers compaction: older messages are summarized into a
+	// single note kept at the head of history. 0 disables auto-compaction.
+	CompactThreshold int
+	// CompactKeep is the number of most-recent messages preserved verbatim when
+	// compacting; everything before them is folded into the summary.
+	CompactKeep int
+	AutoApprove []string
 	// Owners are user IDs allowed to run dangerous (approval-gated) tools. When
 	// empty, owner gating is disabled and any user may approve dangerous actions.
 	Owners  []string
@@ -56,10 +63,17 @@ type Engine struct {
 
 	maxIter     int
 	maxHistory  int
+	compactAt   int
+	compactKeep int
 	autoApprove map[string]struct{}
 	owners      map[string]struct{}
 	persona     string
 	grants      GrantStore
+
+	// summarize condenses an older slice of messages into a compact note. It is
+	// a field so tests can inject a deterministic summarizer; by default it calls
+	// the model via summarizeWithModel.
+	summarize func(ctx context.Context, older []copilot.Message) (string, error)
 }
 
 // NewEngine constructs an engine from its dependencies and config.
@@ -69,6 +83,14 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 	}
 	if cfg.MaxHistory <= 0 {
 		cfg.MaxHistory = 40
+	}
+	if cfg.CompactKeep <= 0 {
+		cfg.CompactKeep = 12
+	}
+	// Auto-compaction can only shrink history when the trigger sits above the
+	// verbatim window; otherwise splitForCompaction never finds anything to fold.
+	if cfg.CompactThreshold > 0 && cfg.CompactThreshold <= cfg.CompactKeep {
+		cfg.CompactThreshold = cfg.CompactKeep + 1
 	}
 	auto := make(map[string]struct{}, len(cfg.AutoApprove))
 	for _, name := range cfg.AutoApprove {
@@ -93,18 +115,22 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 	if grants == nil {
 		grants = NewNoopGrantStore()
 	}
-	return &Engine{
+	e := &Engine{
 		client:      client,
 		tools:       toolReg,
 		skills:      skillReg,
 		store:       store,
 		maxIter:     cfg.MaxIterations,
 		maxHistory:  cfg.MaxHistory,
+		compactAt:   cfg.CompactThreshold,
+		compactKeep: cfg.CompactKeep,
 		autoApprove: auto,
 		owners:      owners,
 		persona:     persona,
 		grants:      grants,
 	}
+	e.summarize = e.summarizeWithModel
+	return e
 }
 
 const defaultPersona = `You are a helpful, capable general assistant operating over a chat interface.
@@ -379,8 +405,13 @@ func (e *Engine) specs() []copilot.Tool {
 	return specs
 }
 
-// persist trims history to the configured cap and saves it to the store.
+// persist compacts (when configured) and trims history, then saves it.
 func (e *Engine) persist(ctx context.Context, sess *Session, messages []copilot.Message) {
+	if e.compactAt > 0 && len(messages) > e.compactAt {
+		if compacted, ok := e.compact(ctx, messages); ok {
+			messages = compacted
+		}
+	}
 	trimmed := trimHistory(messages, e.maxHistory)
 	sess.History = trimmed
 	if err := e.store.Save(ctx, sess.Key, trimmed); err != nil {
@@ -408,10 +439,21 @@ func describeCall(call copilot.ToolCall) string {
 
 // trimHistory caps the history to the most recent maxHistory messages and drops
 // any leading orphan messages so the slice begins on a user message (a tool
-// message must always follow its assistant tool_calls message).
+// message must always follow its assistant tool_calls message). A leading
+// compaction summary is always preserved and never counts as an orphan.
 func trimHistory(messages []copilot.Message, maxHistory int) []copilot.Message {
-	if len(messages) > maxHistory {
-		messages = messages[len(messages)-maxHistory:]
+	// Detach a leading summary so trimming never discards the compacted context.
+	var summary []copilot.Message
+	if len(messages) > 0 && isSummaryMessage(messages[0]) {
+		summary = messages[:1]
+		messages = messages[1:]
+	}
+	budget := maxHistory - len(summary)
+	if budget < 1 {
+		budget = 1
+	}
+	if len(messages) > budget {
+		messages = messages[len(messages)-budget:]
 	}
 	start := 0
 	for start < len(messages) {
@@ -423,5 +465,8 @@ func trimHistory(messages []copilot.Message, maxHistory int) []copilot.Message {
 	if start > 0 {
 		messages = messages[start:]
 	}
-	return append([]copilot.Message(nil), messages...)
+	out := make([]copilot.Message, 0, len(summary)+len(messages))
+	out = append(out, summary...)
+	out = append(out, messages...)
+	return out
 }

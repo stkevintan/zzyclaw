@@ -34,13 +34,15 @@ type RedisConfig struct {
 
 // AgentConfig configures the general ReAct agent.
 type AgentConfig struct {
-	Model         string   `mapstructure:"model"`          // overrides copilot.model for the agent when set
-	MaxIterations int      `mapstructure:"max_iterations"` // max ReAct steps per turn
-	MaxHistory    int      `mapstructure:"max_history"`    // max stored messages per session
-	SkillsDir     string   `mapstructure:"skills_dir"`     // optional shared dir for operator-provided skills (builtins are compiled in); defaults to <data_dir>/agent/skills
-	WorkspaceDir  string   `mapstructure:"workspace_dir"`  // base dir for per-user workspaces; defaults to <data_dir>/agent/workspace
-	AutoApprove   []string `mapstructure:"auto_approve"`   // tool names that skip the approval prompt
-	Owners        []string `mapstructure:"owners"`         // user IDs allowed to run dangerous tools; empty disables the gate
+	Model            string   `mapstructure:"model"`             // overrides copilot.model for the agent when set
+	MaxIterations    int      `mapstructure:"max_iterations"`    // max ReAct steps per turn
+	MaxHistory       int      `mapstructure:"max_history"`       // max stored messages per session
+	CompactThreshold int      `mapstructure:"compact_threshold"` // stored-history length past which older messages are summarized; 0 disables
+	CompactKeep      int      `mapstructure:"compact_keep"`      // most-recent messages kept verbatim when compacting
+	SkillsDir        string   `mapstructure:"skills_dir"`        // optional shared dir for operator-provided skills (builtins are compiled in); defaults to <data_dir>/agent/skills
+	WorkspaceDir     string   `mapstructure:"workspace_dir"`     // base dir for per-user workspaces; defaults to <data_dir>/agent/workspace
+	AutoApprove      []string `mapstructure:"auto_approve"`      // tool names that skip the approval prompt
+	Owners           []string `mapstructure:"owners"`            // user IDs allowed to run dangerous tools; empty disables the gate
 
 	ShellTimeoutSeconds int `mapstructure:"shell_timeout_seconds"` // max wall-clock per run_shell command
 
@@ -80,6 +82,8 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.model", "")
 	v.SetDefault("agent.max_iterations", 12)
 	v.SetDefault("agent.max_history", 40)
+	v.SetDefault("agent.compact_threshold", 30)
+	v.SetDefault("agent.compact_keep", 12)
 	v.SetDefault("agent.skills_dir", "")
 	v.SetDefault("agent.workspace_dir", "")
 	v.SetDefault("agent.shell_timeout_seconds", 120)

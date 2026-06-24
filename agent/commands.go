@@ -46,6 +46,13 @@ func (m *Middleware) buildRouter() *middlewares.CommandRouter {
 			},
 		},
 		middlewares.Command{
+			Aliases: []string{"/agent compact", "/compact"},
+			Desc:    "压缩当前会话（将较早的消息总结为摘要）",
+			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, _ []string) {
+				m.compactCurrent(ctx, msg)
+			},
+		},
+		middlewares.Command{
 			Aliases: []string{"/session list"},
 			Desc:    "查看我的会话列表",
 			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, _ []string) {
