@@ -182,7 +182,8 @@ docker compose up --build
 `docker-compose.yml` runs the app as a non-root user with dropped Linux
 capabilities, `no-new-privileges`, a PID limit, and memory/CPU caps to contain
 the blast radius of shell/skill execution. Credentials, skills, and conversation
-data are persisted under `./data`.
+data are persisted in the `app-data` Docker volume (inspect it with
+`docker compose exec app ls /app/data`).
 
 ## Project layout
 

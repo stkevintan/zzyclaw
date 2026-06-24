@@ -11,8 +11,13 @@ services:
       # Point the agent's conversation memory at the redis service below.
       ZZY_REDIS_ADDR: "redis:6379"
     volumes:
-      # Persist credentials, skills, scripts and conversation data.
-      - ./data:/app/data
+      # Persist credentials, skills and conversation data. A named volume (not a
+      # host bind mount) is used so Docker initializes it from the image's
+      # /app/data ownership (the non-root appuser); a bind mount would inherit the
+      # host directory's ownership and — with cap_drop: ALL and no-new-privileges
+      # below — leave appuser unable to write (no CAP_CHOWN/CAP_SETUID to fix it).
+      # Inspect it with `docker compose exec app ls /app/data` or `docker cp`.
+      - app-data:/app/data
       # Mount your config (copy config.example.toml to config.toml first).
       - ./config.toml:/app/config.toml:ro
     # --- Hardening: contain the agent's shell/script execution ---
@@ -54,3 +59,4 @@ services:
 
 volumes:
   redis-data:
+  app-data:
