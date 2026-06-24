@@ -42,7 +42,7 @@ func TestRunSkillGating(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 
-	runner := tools.NewDenoRunner(filepath.Join(dir, "no-such-deno-binary"), filepath.Join(dir, "cache"), time.Second) // not installed
+	runner := tools.NewDenoRunner(filepath.Join(dir, "no-such-deno-binary"), filepath.Join(dir, "cache"), time.Second, 0) // not installed
 	tool := RunSkillTool(mgr, runner, "")
 
 	// A read-only, no-network skill runs without a prompt; a skill that declares

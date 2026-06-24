@@ -19,15 +19,18 @@ import (
 // subprocess spawning, no FFI, no remote module loading). It is the single
 // execution tier for user-added skills.
 type DenoRunner struct {
-	bin      string        // deno binary (absolute path or a name resolved via PATH)
-	cacheDir string        // DENO_DIR for Deno's internal cache (kept off the skill/workspace)
-	timeout  time.Duration // wall-clock budget per run
+	bin           string        // deno binary (absolute path or a name resolved via PATH)
+	cacheDir      string        // DENO_DIR for Deno's internal cache (kept off the skill/workspace)
+	timeout       time.Duration // wall-clock budget per run
+	maxOldSpaceMB int           // V8 --max-old-space-size cap in MB; <=0 leaves Deno's default
 }
 
 // NewDenoRunner returns a runner backed by the Deno binary at denoPath (or
 // "deno" on PATH when empty). cacheDir is used as DENO_DIR so Deno's internal
-// cache never touches the skill or workspace directories.
-func NewDenoRunner(denoPath, cacheDir string, timeout time.Duration) *DenoRunner {
+// cache never touches the skill or workspace directories. maxOldSpaceMB caps the
+// V8 heap (--max-old-space-size) so a runaway allocation OOMs the contained
+// process instead of pressuring the host; <=0 leaves Deno's default.
+func NewDenoRunner(denoPath, cacheDir string, timeout time.Duration, maxOldSpaceMB int) *DenoRunner {
 	if denoPath == "" {
 		denoPath = "deno"
 	}
@@ -39,7 +42,7 @@ func NewDenoRunner(denoPath, cacheDir string, timeout time.Duration) *DenoRunner
 	if abs, err := filepath.Abs(cacheDir); err == nil {
 		cacheDir = abs
 	}
-	return &DenoRunner{bin: denoPath, cacheDir: cacheDir, timeout: timeout}
+	return &DenoRunner{bin: denoPath, cacheDir: cacheDir, timeout: timeout, maxOldSpaceMB: maxOldSpaceMB}
 }
 
 // Installed reports whether the Deno binary can be located.
@@ -61,11 +64,16 @@ type DenoPermissions struct {
 
 // denoArgs builds the deno argv for an entry file with the given permissions.
 // It is pure so it can be unit-tested without invoking Deno.
-func denoArgs(entryPath string, scriptArgs []string, perms DenoPermissions) []string {
+func denoArgs(entryPath string, scriptArgs []string, perms DenoPermissions, maxOldSpaceMB int) []string {
 	// Deny-by-default flags: no prompting (fail closed), no remote module
 	// fetching (a skill cannot pull arbitrary code at import time), and no
 	// implicit config/lockfile discovery from the skill directory.
 	argv := []string{"run", "--no-prompt", "--no-remote", "--no-config", "--quiet"}
+	// Cap the V8 heap so a runaway allocation crashes the sandboxed process with
+	// an OOM (contained) instead of consuming host memory up to the timeout.
+	if maxOldSpaceMB > 0 {
+		argv = append(argv, fmt.Sprintf("--v8-flags=--max-old-space-size=%d", maxOldSpaceMB))
+	}
 	if len(perms.Read) > 0 {
 		argv = append(argv, "--allow-read="+strings.Join(perms.Read, ","))
 	}
@@ -102,7 +110,7 @@ func (r *DenoRunner) Run(ctx context.Context, entryPath string, scriptArgs []str
 	cctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, r.bin, denoArgs(entryPath, scriptArgs, perms)...)
+	cmd := exec.CommandContext(cctx, r.bin, denoArgs(entryPath, scriptArgs, perms, r.maxOldSpaceMB)...)
 	cmd.Dir = filepath.Dir(entryPath)
 	// Minimal, fixed environment. Deno reads no env from user code (no
 	// --allow-env), and we keep its cache off the mounted data paths.

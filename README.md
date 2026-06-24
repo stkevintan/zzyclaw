@@ -166,6 +166,9 @@ Each run is launched with hardened flags:
 - `--no-remote` — a skill cannot pull arbitrary code at import time.
 - `--no-config` — ignore any config/lockfile inside the skill directory.
 - `--allow-read` / `--allow-write` / `--allow-net` — granted narrowly per run.
+- `--v8-flags=--max-old-space-size` — caps the V8 heap (`skill_memory_mb`,
+  default 256 MB) so a runaway allocation OOMs the contained process instead of
+  pressuring the host.
 
 Default grant for a skill: **read-only** access to its own directory and the
 workspace, and **no network**. A skill opts into more by declaring `write: true`
@@ -176,6 +179,12 @@ so running it is owner-gated and asks for approval (reply `always` to remember
 that skill and its declared access). Read-only, no-network skills run without a
 prompt. `run_skill` can never be wholesale auto-approved. All user-added
 executable skills must use `runtime: deno`.
+
+Resource use is bounded on two axes: each run is hard-killed after
+`skill_timeout_seconds` (default 30s) of wall-clock, and the V8 heap is capped by
+`skill_memory_mb`. Since a skill gets no `--allow-run`, it cannot spawn host
+processes (no fork bombs), and CPU/memory spikes are confined to the sandboxed
+process and torn down with it.
 
 Deno's internal cache (`DENO_DIR`) is pointed at a separate cache directory so it
 never touches the skill or workspace directories. If the Deno binary is not

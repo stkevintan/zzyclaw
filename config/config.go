@@ -50,6 +50,7 @@ type AgentConfig struct {
 
 	DenoPath            string `mapstructure:"deno_path"`             // path to the Deno binary for sandboxed skills; empty => look up "deno" on PATH
 	SkillTimeoutSeconds int    `mapstructure:"skill_timeout_seconds"` // max wall-clock per sandboxed run_skill execution
+	SkillMemoryMB       int    `mapstructure:"skill_memory_mb"`       // V8 heap cap (--max-old-space-size) per sandboxed run_skill execution; 0 leaves Deno's default
 }
 
 // SlogLevel converts the configured log level string to slog.Level.
@@ -89,6 +90,7 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.shell_timeout_seconds", 120)
 	v.SetDefault("agent.deno_path", "")
 	v.SetDefault("agent.skill_timeout_seconds", 30)
+	v.SetDefault("agent.skill_memory_mb", 256)
 	// Config file
 	v.SetConfigName("config")
 	v.SetConfigType("toml")

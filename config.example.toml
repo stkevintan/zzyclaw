@@ -40,3 +40,4 @@ network_allowlist = []       # e.g. ["api.github.com", "wttr.in"]
 # require approval. All user-added executable skills must use runtime: deno.
 deno_path = ""              # path to the deno binary; empty => look up "deno" on PATH
 skill_timeout_seconds = 30  # max wall-clock per sandboxed run_skill execution
+skill_memory_mb = 256       # V8 heap cap per sandboxed run_skill execution; 0 => Deno default

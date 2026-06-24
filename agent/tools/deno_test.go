@@ -8,7 +8,7 @@ import (
 )
 
 func TestDenoArgsDefaultDenyByDefault(t *testing.T) {
-	argv := denoArgs("/skills/x/skill.js", nil, DenoPermissions{})
+	argv := denoArgs("/skills/x/skill.js", nil, DenoPermissions{}, 0)
 	joined := strings.Join(argv, " ")
 	for _, want := range []string{"run", "--no-prompt", "--no-remote", "/skills/x/skill.js"} {
 		if !strings.Contains(joined, want) {
@@ -21,6 +21,10 @@ func TestDenoArgsDefaultDenyByDefault(t *testing.T) {
 			t.Errorf("argv %v unexpectedly granted %q", argv, bad)
 		}
 	}
+	// No heap cap flag when maxOldSpaceMB is 0.
+	if strings.Contains(joined, "--v8-flags") {
+		t.Errorf("argv %v unexpectedly set a v8 flag", argv)
+	}
 }
 
 func TestDenoArgsGrantsScopedPermissions(t *testing.T) {
@@ -29,7 +33,7 @@ func TestDenoArgsGrantsScopedPermissions(t *testing.T) {
 		Write: []string{"/work"},
 		Net:   []string{"example.com", "api.example.org"},
 	}
-	argv := denoArgs("/skills/x/skill.ts", []string{"a", "b"}, perms)
+	argv := denoArgs("/skills/x/skill.ts", []string{"a", "b"}, perms, 0)
 	joined := strings.Join(argv, " ")
 	if !strings.Contains(joined, "--allow-read=/skills/x,/work") {
 		t.Errorf("missing scoped read in %v", argv)
@@ -47,7 +51,7 @@ func TestDenoArgsGrantsScopedPermissions(t *testing.T) {
 }
 
 func TestDenoArgsNetWildcardGrantsAll(t *testing.T) {
-	argv := denoArgs("/skills/x/skill.js", nil, DenoPermissions{Net: []string{"*"}})
+	argv := denoArgs("/skills/x/skill.js", nil, DenoPermissions{Net: []string{"*"}}, 0)
 	joined := strings.Join(argv, " ")
 	for _, a := range argv {
 		if strings.HasPrefix(a, "--allow-net=") {
@@ -59,8 +63,30 @@ func TestDenoArgsNetWildcardGrantsAll(t *testing.T) {
 	}
 }
 
+func TestDenoArgsMemoryCap(t *testing.T) {
+	argv := denoArgs("/skills/x/skill.js", nil, DenoPermissions{}, 256)
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--v8-flags=--max-old-space-size=256") {
+		t.Errorf("missing heap cap flag in %v", argv)
+	}
+	// The cap is a Deno runtime flag and must precede the entry file.
+	entry := -1
+	capIdx := -1
+	for i, a := range argv {
+		if a == "/skills/x/skill.js" {
+			entry = i
+		}
+		if strings.HasPrefix(a, "--v8-flags=") {
+			capIdx = i
+		}
+	}
+	if capIdx < 0 || entry < 0 || capIdx > entry {
+		t.Errorf("v8 flag must come before the entry file: %v", argv)
+	}
+}
+
 func TestDenoRunnerNotInstalled(t *testing.T) {
-	r := NewDenoRunner("no-such-deno-binary-xyz", t.TempDir(), time.Second)
+	r := NewDenoRunner("no-such-deno-binary-xyz", t.TempDir(), time.Second, 0)
 	if r.Installed() {
 		t.Skip("unexpected deno binary on PATH named no-such-deno-binary-xyz")
 	}
