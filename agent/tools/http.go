@@ -62,7 +62,7 @@ func (t *httpGetTool) Dangerous(_ context.Context, args json.RawMessage) bool {
 
 // GrantScope lets an approval be remembered per host, so once a host is approved
 // with "always" the agent may fetch any path on it without re-prompting.
-func (t *httpGetTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
+func (t *httpGetTool) GrantScope(_ context.Context, args json.RawMessage) (key, label string, ok bool) {
 	host := hostFromArgs(args)
 	if host == "" {
 		return "", "", false

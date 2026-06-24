@@ -80,11 +80,11 @@ func TestHTTPGetGrantScope(t *testing.T) {
 	if !ok {
 		t.Fatal("http_get must implement Grantable")
 	}
-	key, label, ok := g.GrantScope(json.RawMessage(`{"url":"https://api.example.com/v1"}`))
+	key, label, ok := g.GrantScope(context.Background(), json.RawMessage(`{"url":"https://api.example.com/v1"}`))
 	if !ok || key != "http_get:api.example.com" {
 		t.Fatalf("GrantScope = (%q,%q,%v), want key http_get:api.example.com", key, label, ok)
 	}
-	if _, _, ok := g.GrantScope(json.RawMessage(`{"url":"not a url"}`)); ok {
+	if _, _, ok := g.GrantScope(context.Background(), json.RawMessage(`{"url":"not a url"}`)); ok {
 		t.Fatal("malformed URL must not be grantable")
 	}
 }

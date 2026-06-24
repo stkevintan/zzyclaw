@@ -35,9 +35,10 @@ type Tool interface {
 type Grantable interface {
 	// GrantScope returns a stable key identifying the resource a specific call
 	// touches (e.g. a network host or a workspace directory) plus a short human
-	// label for the prompt. ok=false means the call cannot be remembered and must
-	// be approved every time.
-	GrantScope(args json.RawMessage) (key, label string, ok bool)
+	// label for the prompt. The context carries the active user so per-user
+	// resources can be resolved. ok=false means the call cannot be remembered and
+	// must be approved every time.
+	GrantScope(ctx context.Context, args json.RawMessage) (key, label string, ok bool)
 }
 
 // Registry is a concurrency-safe collection of tools keyed by name.

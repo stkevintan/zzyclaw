@@ -100,10 +100,22 @@ func IsReadOnlyCommand(command string) bool {
 }
 
 // neverAutoApprove lists tools whose individual invocations must always be
-// evaluated for approval, even when a user adds them to auto_approve. run_shell
-// can do anything, so a blanket bypass is never permitted.
+// evaluated for approval, even when a user adds them to auto_approve. The shared
+// trait is that the tool is a generic launcher whose real danger depends on the
+// specific call, not the tool name:
+//   - run_shell can run any command, so a blanket bypass is never permitted.
+//   - run_skill only launches the sandbox; the danger lives in the particular
+//     skill's script and the write/network access it declares. Auto-approving
+//     the launcher would silently bypass that per-skill gate, so each call is
+//     still evaluated (a remembered "always" grant is per skill + capability).
+//
+// toolNameRunSkill is duplicated here because the run_skill tool lives in the
+// agent package; keeping the string in one place keeps this list authoritative.
+const toolNameRunSkill = "run_skill"
+
 var neverAutoApprove = map[string]bool{
 	toolNameRunShell: true,
+	toolNameRunSkill: true,
 }
 
 // NeverAutoApprove reports whether a tool is barred from the auto_approve list.

@@ -50,7 +50,7 @@ Built-in tools registered in [main.go](main.go):
 | `list_dir`, `search_files`, `delete_path` | Workspace inspection and cleanup |
 | `run_shell` | Build/run/lint/test commands (owner-gated, per-command checked) |
 | `http_get` | Fetch URLs; pre-trusted hosts are allowlisted, others are approval-gated and can be remembered |
-| `run_skill` | Execute a skill's code in the Deno sandbox |
+| `run_skill` | Execute a skill's code in the Deno sandbox (skills declaring `write`/`net` are approval-gated, per-call checked) |
 | `list_skills`, `load_skill`, `unload_skill`, `create_skill`, `delete_skill` | Skill management |
 
 Key safety mechanics:
@@ -58,15 +58,18 @@ Key safety mechanics:
 - **Owner gating** — tools that report themselves as dangerous are only
   approvable by configured `owners`. With no owners set the gate is disabled.
 - **Auto-approve allowlist** — low-risk tools can be added to `auto_approve`;
-  tools flagged "never auto-approve" (e.g. `run_shell`) are still evaluated per
-  call.
+  tools flagged "never auto-approve" (e.g. `run_shell`, `run_skill`) are still
+  evaluated per call, because the danger depends on the specific command or
+  skill rather than the tool name.
 - **Remembered approvals** — when prompted for a dangerous action you can reply
   `yes` (allow once), `always` (allow and remember the scope), or `no`. `always`
   decisions are stored **per user** in the shared store (Redis when configured,
   otherwise process-local) so equivalent calls skip the prompt: `http_get` is
-  remembered per host (growing the allowlist on demand), and file
-  writes/edits/deletes are remembered per directory. One user's grants
-  never apply to another.
+  remembered per host (growing the allowlist on demand), file
+  writes/edits/deletes are remembered per directory, and `run_skill` is
+  remembered per skill **and** its declared `write`/`net` capabilities (so
+  widening a skill's access re-prompts). One user's grants never apply to
+  another.
 - **Workspace is writable by default** — file writes/edits/deletes inside the
   agent **workspace root** are pre-approved and never prompt; the gate (and the
   remembered-approval flow above) only applies to mutations outside it, such as
@@ -166,10 +169,13 @@ Each run is launched with hardened flags:
 
 Default grant for a skill: **read-only** access to its own directory and the
 workspace, and **no network**. A skill opts into more by declaring `write: true`
-or `net: host-a, host-b` in its frontmatter. Running a skill does not require
-approval: the Deno sandbox is the trust boundary and enforces exactly the
-declared read/write/net limits, so `run_skill` is not treated as a dangerous
-tool. All user-added executable skills must use `runtime: deno`.
+or `net: host-a, host-b` in its frontmatter. The sandbox is the *enforcement*
+boundary, but `run_skill` is still a generic launcher whose risk depends on the
+specific script: a skill that declares `write` or `net` is treated as dangerous,
+so running it is owner-gated and asks for approval (reply `always` to remember
+that skill and its declared access). Read-only, no-network skills run without a
+prompt. `run_skill` can never be wholesale auto-approved. All user-added
+executable skills must use `runtime: deno`.
 
 Deno's internal cache (`DENO_DIR`) is pointed at a separate cache directory so it
 never touches the skill or workspace directories. If the Deno binary is not

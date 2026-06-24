@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"zzy/agent/skill"
@@ -13,12 +14,13 @@ import (
 )
 
 // runSkillTool executes a skill's code inside the Deno sandbox. Only skills that
-// declare `runtime: deno` are runnable. A skill runs as an isolated Deno
-// subprocess: it may read its own directory and the calling user's workspace,
-// and gets only the write (`write: true`) and network (`net: <hosts>`) access its
-// frontmatter declares. Because the sandbox enforces those limits and a skill
-// cannot invoke the agent's tools or escape the sandbox, running one is not
-// treated as dangerous and never prompts for approval.
+// declare `runtime: deno` are runnable. By default a skill runs read-only with
+// access to its own directory and the calling user's workspace and no network,
+// which needs no approval. A skill may opt into workspace writes (`write: true`)
+// or network access (`net: <hosts>`); those elevated runs are treated as
+// dangerous and go through the approval (and owner) gate. Approving such a run
+// with "always" is remembered per skill and capability set, so re-prompting only
+// happens if the skill later changes the write/network access it declares.
 type runSkillTool struct {
 	mgr       *skill.Manager
 	runner    *tools.DenoRunner
@@ -33,19 +35,65 @@ func RunSkillTool(mgr *skill.Manager, runner *tools.DenoRunner, workspace string
 
 func (t *runSkillTool) Name() string { return "run_skill" }
 func (t *runSkillTool) Description() string {
-	return "Run a sandboxed skill's code (skills with `runtime: deno`). The code runs in the Deno sandbox: it may read its own directory and the workspace, and gets only the write/network access the skill declares in its frontmatter. Running a skill does not require approval because the sandbox enforces these limits. The skill's stdout is returned. Use list_skills to discover skills."
+	return "Run a sandboxed skill's code (skills with `runtime: deno`). The code runs in the Deno sandbox: by default it may only read its own directory and the workspace, with no network. Skills that declare `write: true` or `net: <hosts>` get those capabilities and require approval (you can reply \"always\" once to remember the skill). The skill's stdout is returned. Use list_skills to discover skills."
 }
 func (t *runSkillTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"skill":{"type":"string","description":"Name of the skill to run."},"args":{"type":"array","items":{"type":"string"},"description":"Arguments passed to the skill program."}},"required":["skill"]}`)
 }
 
-// Dangerous always returns false: a skill runs as an isolated Deno subprocess
-// whose only capabilities are the sandbox permissions Deno enforces (read its
-// own dir and the calling user's workspace, plus any write/net the skill author
-// declared in frontmatter). A skill cannot invoke the agent's tools or escape
-// the sandbox, so running one never requires approval. The declared write/net
-// grants are still applied to the Deno process in Execute.
-func (t *runSkillTool) Dangerous(context.Context, json.RawMessage) bool { return false }
+// Dangerous returns true when the targeted skill requests elevated capabilities
+// (workspace write or network), so the engine prompts for approval first.
+// Read-only, no-network skills run without a prompt. The skill is resolved for
+// the active user so each user is gated only by their own skills' declarations.
+func (t *runSkillTool) Dangerous(ctx context.Context, args json.RawMessage) bool {
+	s, ok := t.resolveSkill(ctx, args)
+	return ok && skillElevated(s)
+}
+
+// GrantScope lets an elevated skill run be remembered with "always". The grant is
+// scoped to the skill name AND the exact write/network capabilities it declares,
+// so if the skill later widens that access (e.g. adds a host or turns on write)
+// the key changes and the user is prompted again — a remembered approval can
+// never silently cover newly-declared capabilities.
+func (t *runSkillTool) GrantScope(ctx context.Context, args json.RawMessage) (key, label string, ok bool) {
+	s, ok := t.resolveSkill(ctx, args)
+	if !ok || !skillElevated(s) {
+		return "", "", false
+	}
+	write := "0"
+	if s.Write {
+		write = "1"
+	}
+	net := append([]string(nil), s.Net...)
+	sort.Strings(net)
+	key = fmt.Sprintf("run_skill:%s:w=%s;n=%s", s.Name, write, strings.Join(net, ","))
+	return key, fmt.Sprintf("running the skill %q with its current access", s.Name), true
+}
+
+// resolveSkill loads the skill named in args for the active user. It returns
+// ok=false for malformed args, unknown skills, or non-deno (instructions-only)
+// skills, none of which are runnable through the sandbox.
+func (t *runSkillTool) resolveSkill(ctx context.Context, args json.RawMessage) (*skill.Skill, bool) {
+	var a struct {
+		Skill string `json:"skill"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil || a.Skill == "" {
+		return nil, false
+	}
+	userID := userIDFromContext(ctx)
+	s, ok := t.mgr.Get(userID, a.Skill)
+	if !ok || s.Runtime != "deno" {
+		return nil, false
+	}
+	return s, true
+}
+
+// skillElevated reports whether a skill requests capabilities beyond the
+// read-only default (workspace write or network), which is what makes a run
+// dangerous and subject to approval.
+func skillElevated(s *skill.Skill) bool {
+	return s.Write || len(s.Net) > 0
+}
 
 func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {

@@ -96,10 +96,12 @@ Opt into more only when the skill truly needs it, using frontmatter:
    ---
    ` + "```" + `
 
-Skills run inside the Deno sandbox, which enforces these permissions, so running
-a skill does not prompt for approval. Still request the minimum: a skill with
-` + "`write`" + ` or ` + "`net`" + ` can modify the workspace or reach the network within those
-limits, so omit them unless the skill truly needs them.
+Skills run inside the Deno sandbox, which enforces these permissions. A skill
+that declares ` + "`write`" + ` or ` + "`net`" + ` can modify the workspace or reach the network
+within those limits, so running it asks the user for approval first (they may
+reply "always" to remember that skill). A read-only, no-network skill runs
+without prompting. Request the minimum: omit ` + "`write`/`net`" + ` unless the skill
+truly needs them.
 
 4. After ` + "`create_skill`" + ` succeeds, tell the user the skill was created and that it
    is now available (the registry reloads automatically).
