@@ -76,9 +76,10 @@ func (m *Manager) userRegistry(userID string) (*Registry, error) {
 	return reg, nil
 }
 
-// List returns the builtin skills plus any shared on-disk skills and userID's
-// own skills, sorted by name. A disk skill can never shadow a builtin (those
-// names are reserved), and duplicate names are reported once.
+// List returns the builtin skills plus userID's own skills and any shared
+// on-disk skills, sorted by name. A disk skill can never shadow a builtin (those
+// names are reserved), a user's private skill shadows a shared skill of the same
+// name (most-specific layer wins), and duplicate names are reported once.
 func (m *Manager) List(userID string) []*Skill {
 	out := builtinList()
 	seen := make(map[string]bool, len(out))
@@ -94,28 +95,31 @@ func (m *Manager) List(userID string) []*Skill {
 			out = append(out, s)
 		}
 	}
-	add(m.global.List())
 	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
 		add(ur.List())
 	}
+	add(m.global.List())
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
 // Get resolves a skill by name for userID, checking the compiled-in builtins
-// first, then any shared on-disk skills, then the user's own skills. It never
-// returns another user's skill.
+// first, then the user's own skills, then any shared on-disk skills. A user's
+// private skill thus shadows a shared skill of the same name. The builtin is
+// returned as a shallow copy so callers can't mutate the shared original, and
+// Get never returns another user's skill.
 func (m *Manager) Get(userID, name string) (*Skill, bool) {
 	if s, ok := builtinSkills[name]; ok {
-		return s, true
-	}
-	if s, ok := m.global.Get(name); ok && !builtinSkillSet[s.Name] {
-		return s, true
+		sCopy := *s
+		return &sCopy, true
 	}
 	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
 		if s, ok := ur.Get(name); ok && !builtinSkillSet[s.Name] {
 			return s, true
 		}
+	}
+	if s, ok := m.global.Get(name); ok && !builtinSkillSet[s.Name] {
+		return s, true
 	}
 	return nil, false
 }

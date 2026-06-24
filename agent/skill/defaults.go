@@ -144,11 +144,13 @@ var builtinSkills = func() map[string]*Skill {
 	return m
 }()
 
-// builtinList returns the compiled-in builtin skills sorted by name.
+// builtinList returns the compiled-in builtin skills sorted by name. Each entry
+// is a shallow copy so callers can never mutate the shared in-memory originals.
 func builtinList() []*Skill {
 	out := make([]*Skill, 0, len(builtinSkills))
 	for _, s := range builtinSkills {
-		out = append(out, s)
+		sCopy := *s
+		out = append(out, &sCopy)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

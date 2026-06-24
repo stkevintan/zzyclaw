@@ -136,6 +136,66 @@ func TestSharedSkillVisibleToAllUsers(t *testing.T) {
 	}
 }
 
+// TestPrivateSkillShadowsShared verifies that a user's private skill takes
+// precedence over a shared skill of the same name (most-specific layer wins),
+// while other users still see the shared one.
+func TestPrivateSkillShadowsShared(t *testing.T) {
+	base := t.TempDir()
+	mgr, err := NewManager(filepath.Join(base, "global"), func(userID string) (string, error) {
+		return filepath.Join(base, "users", userID, "skills"), nil
+	})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+
+	if err := mgr.CreateShared("notes", "---\nname: notes\ndescription: shared notes\n---\n# Shared\n", "", ""); err != nil {
+		t.Fatalf("create shared: %v", err)
+	}
+	if err := mgr.Create("alice", "notes", "---\nname: notes\ndescription: alice notes\n---\n# Alice\n", "", ""); err != nil {
+		t.Fatalf("alice create: %v", err)
+	}
+
+	// Alice resolves her own version.
+	if s, ok := mgr.Get("alice", "notes"); !ok || s.Description != "alice notes" {
+		t.Fatalf("alice should see her private notes, got %+v ok=%v", s, ok)
+	}
+	// Bob still resolves the shared version.
+	if s, ok := mgr.Get("bob", "notes"); !ok || s.Description != "shared notes" {
+		t.Fatalf("bob should see the shared notes, got %+v ok=%v", s, ok)
+	}
+
+	// Alice's list contains the private one exactly once.
+	count, desc := 0, ""
+	for _, s := range mgr.List("alice") {
+		if s.Name == "notes" {
+			count++
+			desc = s.Description
+		}
+	}
+	if count != 1 || desc != "alice notes" {
+		t.Fatalf("alice list should contain her notes once, got count=%d desc=%q", count, desc)
+	}
+}
+
+// TestBuiltinGetReturnsCopy verifies that mutating a skill returned by Get does
+// not corrupt the shared compiled-in builtin.
+func TestBuiltinGetReturnsCopy(t *testing.T) {
+	base := t.TempDir()
+	mgr, err := NewManager(filepath.Join(base, "global"), nil)
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	s, ok := mgr.Get("", "write-skill")
+	if !ok {
+		t.Fatal("expected builtin write-skill")
+	}
+	original := s.Instructions
+	s.Instructions = "tampered"
+	if again, _ := mgr.Get("", "write-skill"); again.Instructions != original {
+		t.Fatal("mutating a returned builtin must not affect the shared original")
+	}
+}
+
 func hasSkill(skills []*Skill, name string) bool {
 	for _, s := range skills {
 		if s.Name == name {
