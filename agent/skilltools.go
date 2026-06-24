@@ -46,7 +46,6 @@ func canManageShared(owners map[string]struct{}, userID string) bool {
 	return ok
 }
 
-
 // userIDFromContext returns the active user's ID, or "" when no session is set.
 func userIDFromContext(ctx context.Context) string {
 	if sess, ok := sessionFromContext(ctx); ok && sess != nil {
@@ -241,7 +240,6 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	return fmt.Sprintf("Deleted %s skill %q.", scope, a.Name), nil
 }
-
 
 // loadedSkillInstructions returns the instructions of all skills currently
 // loaded in the session, sorted by name, for inclusion in the system prompt.
