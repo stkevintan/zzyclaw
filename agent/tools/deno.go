@@ -63,6 +63,15 @@ type DenoPermissions struct {
 	Env   []string // environment variable names the run may read (Deno --allow-env)
 }
 
+// protectedSandboxEnv are the variables that define the sandbox itself. A skill
+// may never override them via its env declaration: e.g. redirecting DENO_DIR
+// would let the skill point Deno's module cache at a directory it controls.
+var protectedSandboxEnv = map[string]bool{
+	"DENO_DIR":             true,
+	"DENO_NO_UPDATE_CHECK": true,
+	"NO_COLOR":             true,
+}
+
 // denoArgs builds the deno argv for an entry file with the given permissions.
 // It is pure so it can be unit-tested without invoking Deno.
 func denoArgs(entryPath string, scriptArgs []string, perms DenoPermissions, maxOldSpaceMB int) []string {
@@ -128,6 +137,10 @@ func (r *DenoRunner) Run(ctx context.Context, entryPath string, scriptArgs []str
 		"NO_COLOR=1",
 	}
 	for _, name := range perms.Env {
+		// Never let a skill override the sandbox's own environment.
+		if protectedSandboxEnv[name] {
+			continue
+		}
 		if v, ok := os.LookupEnv(name); ok {
 			cmd.Env = append(cmd.Env, name+"="+v)
 		}

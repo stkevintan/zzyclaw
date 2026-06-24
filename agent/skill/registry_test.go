@@ -110,6 +110,14 @@ func TestParseEnvNoneIsEmpty(t *testing.T) {
 	}
 }
 
+func TestParseEnvDeduplicates(t *testing.T) {
+	doc := "---\nname: greet\ndescription: x\nruntime: deno\nenv: API_TOKEN, HOME, API_TOKEN\n---\n# Greet\n"
+	s := parse(doc)
+	if len(s.Env) != 2 || s.Env[0] != "API_TOKEN" || s.Env[1] != "HOME" {
+		t.Errorf("env = %v, want deduped [API_TOKEN HOME]", s.Env)
+	}
+}
+
 func TestCreateAndRemoveSkill(t *testing.T) {
 	dir := t.TempDir()
 	r, err := NewRegistry(dir)

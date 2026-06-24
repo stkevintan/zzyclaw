@@ -228,16 +228,26 @@ func (n *netList) UnmarshalYAML(value *yaml.Node) error {
 type envList []string
 
 func (e *envList) UnmarshalYAML(value *yaml.Node) error {
+	var raw []string
 	switch value.Kind {
 	case yaml.SequenceNode:
-		var out []string
 		for _, item := range value.Content {
-			out = append(out, splitListCase(item.Value)...)
+			raw = append(raw, splitListCase(item.Value)...)
 		}
-		*e = out
 	default:
-		*e = splitListCase(value.Value)
+		raw = splitListCase(value.Value)
 	}
+	// Deduplicate (preserving order) so the grant fingerprint stays stable and
+	// Deno isn't handed redundant --allow-env entries.
+	seen := make(map[string]bool, len(raw))
+	var out []string
+	for _, s := range raw {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	*e = out
 	return nil
 }
 
