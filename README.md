@@ -157,8 +157,8 @@ claim builtin status, and builtin skills cannot be overwritten or deleted.
 
 User-authored skill code never runs in the host process. Instead it executes
 out-of-process in Deno, which is **deny-by-default**: the guest gets only the
-read/write paths and network hosts explicitly granted for that run, and nothing
-else ([agent/tools/deno.go](agent/tools/deno.go)).
+read/write paths, network hosts, and environment variables explicitly granted
+for that run, and nothing else ([agent/tools/deno.go](agent/tools/deno.go)).
 
 Each run is launched with hardened flags:
 
@@ -166,17 +166,22 @@ Each run is launched with hardened flags:
 - `--no-remote` — a skill cannot pull arbitrary code at import time.
 - `--no-config` — ignore any config/lockfile inside the skill directory.
 - `--allow-read` / `--allow-write` / `--allow-net` — granted narrowly per run.
+- `--allow-env=NAME,...` — only when a skill declares `env`; scoped to the named
+  variables (never a bare `--allow-env`). The sandbox otherwise hides the host
+  environment, and only the declared names are passed through with their host
+  values.
 - `--v8-flags=--max-old-space-size` — caps the V8 heap (`skill_memory_mb`,
   default 256 MB) so a runaway allocation OOMs the contained process instead of
   pressuring the host.
 
 Default grant for a skill: **read-only** access to its own directory and the
-workspace, and **no network**. A skill opts into more by declaring `write: true`
-or `net: host-a, host-b` in its frontmatter. The sandbox is the *enforcement*
-boundary, but `run_skill` is still a generic launcher whose risk depends on the
-specific script: a skill that declares `write` or `net` is treated as dangerous,
-so running it is owner-gated and asks for approval (reply `always` to remember
-that skill and its declared access). Read-only, no-network skills run without a
+workspace, **no network**, and **no environment access**. A skill opts into more
+by declaring `write: true`, `net: host-a, host-b`, or `env: NAME_A, NAME_B` in
+its frontmatter. The sandbox is the *enforcement* boundary, but `run_skill` is
+still a generic launcher whose risk depends on the specific script: a skill that
+declares `write`, `net`, or `env` is treated as dangerous, so running it is
+owner-gated and asks for approval (reply `always` to remember that skill and its
+declared access). Read-only skills with no network or env access run without a
 prompt. `run_skill` can never be wholesale auto-approved. All user-added
 executable skills must use `runtime: deno`.
 
