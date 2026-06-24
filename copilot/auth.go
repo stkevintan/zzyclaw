@@ -187,7 +187,10 @@ func validateCredential(githubToken string) error {
 	req.Header.Set("User-Agent", "GitHubCopilotChat/0.26.7")
 	req.Header.Set("X-Github-Api-Version", "2025-04-01")
 
-	resp, err := http.DefaultClient.Do(req)
+	// Use an explicit timeout so a hung/slow Copilot endpoint can't block startup
+	// indefinitely (http.DefaultClient has no timeout).
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

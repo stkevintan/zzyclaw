@@ -60,6 +60,11 @@ func (s *Sandbox) Roots() []string { return append([]string(nil), s.roots...) }
 // without re-prompting. All mutating tools share the "fs_write" prefix so the
 // grant covers writes, edits and deletes alike. ok=false when the path can't be
 // resolved inside the sandbox (the call must then be approved every time).
+//
+// When path is itself an existing directory (e.g. deleting a sub-directory) the
+// scope is that directory, not its parent: otherwise approving the deletion of
+// one sub-directory would silently grant write/delete over the whole parent
+// (potentially the workspace root) — a privilege escalation.
 func grantScopeForPath(sb *Sandbox, rawPath string) (key, label string, ok bool) {
 	if rawPath == "" {
 		return "", "", false
@@ -68,7 +73,10 @@ func grantScopeForPath(sb *Sandbox, rawPath string) (key, label string, ok bool)
 	if err != nil {
 		return "", "", false
 	}
-	dir := filepath.Dir(abs)
+	dir := abs
+	if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
+		dir = filepath.Dir(abs)
+	}
 	return "fs_write:" + dir, "file changes under " + dir, true
 }
 

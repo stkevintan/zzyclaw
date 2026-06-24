@@ -33,18 +33,31 @@ func NewNoopGrantStore() GrantStore { return noopGrantStore{} }
 // in production, in-memory in dev), mirroring how per-user session indexes are
 // stored. Each user's set is cached in memory after first access to keep the
 // Allowed hot path off the network.
+//
+// Locking is per user: the small global mutex only guards the cache map lookup,
+// while all store I/O happens under a user's own lock. This keeps one user's
+// (or one slow Redis call's) latency from blocking every other user.
 type storeGrantStore struct {
 	store Store
 
 	mu    sync.Mutex
-	cache map[string]map[string]struct{} // userID -> granted keys (hydrated lazily)
+	cache map[string]*userGrantSet // userID -> grant set (created lazily)
+}
+
+// userGrantSet is one user's cached grant set, loaded from the store at most
+// once on success. A failed load leaves loaded=false so the next call retries
+// instead of caching an empty set permanently.
+type userGrantSet struct {
+	mu     sync.RWMutex
+	loaded bool
+	keys   map[string]struct{}
 }
 
 // NewStoreGrantStore returns a per-user GrantStore backed by store. It shares the
 // same durability as conversation memory and session indexes: grants survive
 // restarts when the store is Redis-backed, and are process-local otherwise.
 func NewStoreGrantStore(store Store) GrantStore {
-	return &storeGrantStore{store: store, cache: make(map[string]map[string]struct{})}
+	return &storeGrantStore{store: store, cache: make(map[string]*userGrantSet)}
 }
 
 func grantsMetaKey(userID string) string { return "grants:" + userID }
@@ -53,34 +66,63 @@ type grantsRecord struct {
 	Keys []string `json:"keys"`
 }
 
-// userSetLocked returns the hydrated grant set for userID, loading it from the
-// store on first access. The caller must hold s.mu.
-func (s *storeGrantStore) userSetLocked(ctx context.Context, userID string) map[string]struct{} {
-	if set, ok := s.cache[userID]; ok {
-		return set
+// userSet returns the per-user grant set, creating it on first access. Only the
+// global cache-map lookup is guarded here; store I/O happens later under the
+// user's own lock (see ensureLoaded).
+func (s *storeGrantStore) userSet(userID string) *userGrantSet {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	us, ok := s.cache[userID]
+	if !ok {
+		us = &userGrantSet{keys: make(map[string]struct{})}
+		s.cache[userID] = us
 	}
-	set := make(map[string]struct{})
-	if data, err := s.store.GetMeta(ctx, grantsMetaKey(userID)); err == nil && len(data) > 0 {
+	return us
+}
+
+// ensureLoaded hydrates us from the store once. A transient store error leaves
+// us.loaded false so a later call retries rather than caching an empty set.
+func (s *storeGrantStore) ensureLoaded(ctx context.Context, userID string, us *userGrantSet) {
+	us.mu.RLock()
+	loaded := us.loaded
+	us.mu.RUnlock()
+	if loaded {
+		return
+	}
+
+	us.mu.Lock()
+	defer us.mu.Unlock()
+	if us.loaded {
+		return
+	}
+	data, err := s.store.GetMeta(ctx, grantsMetaKey(userID))
+	if err != nil {
+		// Leave loaded=false to retry on the next call.
+		return
+	}
+	if len(data) > 0 {
 		var rec grantsRecord
 		if json.Unmarshal(data, &rec) == nil {
 			for _, k := range rec.Keys {
 				if k != "" {
-					set[k] = struct{}{}
+					us.keys[k] = struct{}{}
 				}
 			}
 		}
 	}
-	s.cache[userID] = set
-	return set
+	us.loaded = true
 }
 
 func (s *storeGrantStore) Allowed(ctx context.Context, userID, key string) bool {
 	if userID == "" || key == "" {
 		return false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.userSetLocked(ctx, userID)[key]
+	us := s.userSet(userID)
+	s.ensureLoaded(ctx, userID, us)
+
+	us.mu.RLock()
+	defer us.mu.RUnlock()
+	_, ok := us.keys[key]
 	return ok
 }
 
@@ -88,20 +130,18 @@ func (s *storeGrantStore) Grant(ctx context.Context, userID, key string) error {
 	if userID == "" || key == "" {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	set := s.userSetLocked(ctx, userID)
-	if _, ok := set[key]; ok {
+	us := s.userSet(userID)
+	s.ensureLoaded(ctx, userID, us)
+
+	us.mu.Lock()
+	defer us.mu.Unlock()
+	if _, ok := us.keys[key]; ok {
 		return nil
 	}
-	set[key] = struct{}{}
-	return s.persistLocked(ctx, userID, set)
-}
+	us.keys[key] = struct{}{}
 
-// persistLocked writes a user's grant set to the store. The caller must hold s.mu.
-func (s *storeGrantStore) persistLocked(ctx context.Context, userID string, set map[string]struct{}) error {
-	keys := make([]string, 0, len(set))
-	for k := range set {
+	keys := make([]string, 0, len(us.keys))
+	for k := range us.keys {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
