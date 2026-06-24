@@ -344,7 +344,11 @@ func (e *Engine) systemPrompt(sess *Session) string {
 	var b strings.Builder
 	b.WriteString(e.persona)
 
-	if skills := e.skills.List(sess.UserID); len(skills) > 0 {
+	userID := ""
+	if sess != nil {
+		userID = sess.UserID
+	}
+	if skills := e.skills.List(userID); len(skills) > 0 {
 		b.WriteString("\n\n# Available skills\nLoad a skill with load_skill when its description matches the task:\n")
 		for _, s := range skills {
 			fmt.Fprintf(&b, "- %s: %s\n", s.Name, s.Description)

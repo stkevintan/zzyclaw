@@ -44,26 +44,35 @@ func NewManager(globalDir string, userDir func(userID string) (string, error)) (
 }
 
 // userRegistry returns the (lazily created) registry for userID, or nil when
-// userID is empty or no per-user resolver is configured.
+// userID is empty or no per-user resolver is configured. Disk I/O (directory
+// creation and the initial scan) happens outside the lock so one user's first
+// access never blocks other users; the lock is held only to read and update the
+// cache, with a second check to avoid racing duplicate registries.
 func (m *Manager) userRegistry(userID string) (*Registry, error) {
 	if userID == "" || m.userDir == nil {
 		return nil, nil
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if r, ok := m.users[userID]; ok {
+	r, ok := m.users[userID]
+	m.mu.Unlock()
+	if ok {
 		return r, nil
 	}
 	dir, err := m.userDir(userID)
 	if err != nil {
 		return nil, fmt.Errorf("skill: resolve user dir: %w", err)
 	}
-	r, err := NewRegistry(dir)
+	reg, err := NewRegistry(dir)
 	if err != nil {
 		return nil, err
 	}
-	m.users[userID] = r
-	return r, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r, ok = m.users[userID]; ok {
+		return r, nil
+	}
+	m.users[userID] = reg
+	return reg, nil
 }
 
 // List returns the builtin skills plus userID's own skills, sorted by name. A
@@ -122,10 +131,13 @@ func (m *Manager) Remove(userID, name string) error {
 	return ur.Remove(name)
 }
 
-// Reload rescans the shared builtins and userID's own skills from disk.
+// Reload rescans skills from disk. With an empty userID it rescans the shared
+// builtins; otherwise it rescans only userID's own skills (the builtins are
+// static and seeded at startup, so reloading them per user would be redundant
+// disk I/O).
 func (m *Manager) Reload(userID string) error {
-	if err := m.global.Reload(); err != nil {
-		return err
+	if userID == "" {
+		return m.global.Reload()
 	}
 	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
 		return ur.Reload()

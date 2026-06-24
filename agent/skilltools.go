@@ -82,7 +82,7 @@ func (t *loadSkillTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 	sess, ok := sessionFromContext(ctx)
-	if !ok {
+	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
 	_ = t.mgr.Reload(sess.UserID)
@@ -112,7 +112,7 @@ func (t *unloadSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 	sess, ok := sessionFromContext(ctx)
-	if !ok {
+	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
 	delete(sess.ActiveSkills, a.Name)
@@ -144,7 +144,7 @@ func (t *createSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 	sess, ok := sessionFromContext(ctx)
-	if !ok {
+	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
 	if err := t.mgr.Create(sess.UserID, a.Name, a.SkillMD, a.EntryFile, a.EntryCode); err != nil {
@@ -177,7 +177,7 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 	sess, ok := sessionFromContext(ctx)
-	if !ok {
+	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
 	if err := t.mgr.Remove(sess.UserID, a.Name); err != nil {
@@ -190,6 +190,9 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 // loadedSkillInstructions returns the instructions of all skills currently
 // loaded in the session, sorted by name, for inclusion in the system prompt.
 func loadedSkillInstructions(mgr *skill.Manager, sess *Session) []string {
+	if sess == nil {
+		return nil
+	}
 	names := make([]string, 0, len(sess.ActiveSkills))
 	for name := range sess.ActiveSkills {
 		names = append(names, name)

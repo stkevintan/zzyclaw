@@ -49,10 +49,7 @@ func (t *runSkillTool) Dangerous(ctx context.Context, args json.RawMessage) bool
 	if err := json.Unmarshal(args, &a); err != nil || a.Skill == "" {
 		return false
 	}
-	userID := ""
-	if sess, ok := sessionFromContext(ctx); ok {
-		userID = sess.UserID
-	}
+	userID := userIDFromContext(ctx)
 	s, ok := t.mgr.Get(userID, a.Skill)
 	if !ok || s.Runtime != "deno" {
 		return false
@@ -71,10 +68,7 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if a.Skill == "" {
 		return "", fmt.Errorf("skill name must not be empty")
 	}
-	userID := ""
-	if sess, ok := sessionFromContext(ctx); ok {
-		userID = sess.UserID
-	}
+	userID := userIDFromContext(ctx)
 	_ = t.mgr.Reload(userID)
 	s, ok := t.mgr.Get(userID, a.Skill)
 	if !ok {
