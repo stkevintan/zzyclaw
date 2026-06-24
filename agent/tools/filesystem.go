@@ -282,7 +282,7 @@ func (t *writeFileTool) Dangerous(_ context.Context, args json.RawMessage) bool 
 }
 
 // GrantScope remembers approval per target directory (see grantScopeForPath).
-func (t *writeFileTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
+func (t *writeFileTool) GrantScope(_ context.Context, args json.RawMessage) (key, label string, ok bool) {
 	var a struct {
 		Path string `json:"path"`
 	}
@@ -364,7 +364,7 @@ func (t *editFileTool) Dangerous(_ context.Context, args json.RawMessage) bool {
 }
 
 // GrantScope remembers approval per target directory (see grantScopeForPath).
-func (t *editFileTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
+func (t *editFileTool) GrantScope(_ context.Context, args json.RawMessage) (key, label string, ok bool) {
 	var a struct {
 		Path string `json:"path"`
 	}
@@ -497,7 +497,7 @@ func (t *deletePathTool) Dangerous(_ context.Context, args json.RawMessage) bool
 }
 
 // GrantScope remembers approval per target directory (see grantScopeForPath).
-func (t *deletePathTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
+func (t *deletePathTool) GrantScope(_ context.Context, args json.RawMessage) (key, label string, ok bool) {
 	var a struct {
 		Path string `json:"path"`
 	}

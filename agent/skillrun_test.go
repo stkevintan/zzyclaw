@@ -21,7 +21,9 @@ func TestRunSkillGating(t *testing.T) {
 	mustWrite(t, filepath.Join(wdir, "SKILL.md"), "---\nname: greet\ndescription: x\nruntime: deno\nentry: skill.js\n---\n# Greet\n")
 	mustWrite(t, filepath.Join(wdir, "skill.js"), "console.log('hi')\n")
 
-	// A deno skill that requests network — running it is dangerous (needs approval).
+	// A deno skill that requests network access. Because the launcher's risk
+	// depends on the script's declared capabilities, a net (or write) skill is
+	// dangerous and goes through the approval gate; the grant can be remembered.
 	netdir := filepath.Join(dir, "fetcher")
 	mustMkdir(t, netdir)
 	mustWrite(t, filepath.Join(netdir, "SKILL.md"), "---\nname: fetcher\ndescription: x\nruntime: deno\nnet: example.com\n---\n# Fetcher\n")
@@ -43,13 +45,27 @@ func TestRunSkillGating(t *testing.T) {
 	runner := tools.NewDenoRunner(filepath.Join(dir, "no-such-deno-binary"), filepath.Join(dir, "cache"), time.Second) // not installed
 	tool := RunSkillTool(mgr, runner, "")
 
-	// Read-only, no-network skill: frictionless (not dangerous).
+	// A read-only, no-network skill runs without a prompt; a skill that declares
+	// network (or write) is dangerous and must be approved.
 	if tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"greet"}`)) {
 		t.Error("read-only no-network skill must not be dangerous")
 	}
-	// Network skill: requires approval.
 	if !tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"fetcher"}`)) {
-		t.Error("network skill must be dangerous (needs approval)")
+		t.Error("network skill must be dangerous")
+	}
+
+	// The elevated skill is grantable ("always"), scoped to its declared access;
+	// the read-only skill is not grantable because it never prompts.
+	g, ok := tool.(tools.Grantable)
+	if !ok {
+		t.Fatal("run_skill must implement Grantable")
+	}
+	key, label, ok := g.GrantScope(context.Background(), json.RawMessage(`{"skill":"fetcher"}`))
+	if !ok || key != "run_skill:fetcher:w=0;n=example.com" {
+		t.Fatalf("GrantScope(fetcher) = (%q,%q,%v), want key run_skill:fetcher:w=0;n=example.com", key, label, ok)
+	}
+	if _, _, ok := g.GrantScope(context.Background(), json.RawMessage(`{"skill":"greet"}`)); ok {
+		t.Error("read-only skill must not be grantable")
 	}
 
 	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"skill":"nope"}`)); err == nil {
