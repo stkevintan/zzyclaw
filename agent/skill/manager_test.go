@@ -196,6 +196,104 @@ func TestBuiltinGetReturnsCopy(t *testing.T) {
 	}
 }
 
+// TestScope verifies that Scope reports the correct tier for a name, including
+// that a private skill shadows a shared one of the same name.
+func TestScope(t *testing.T) {
+	base := t.TempDir()
+	mgr, err := NewManager(filepath.Join(base, "global"), func(userID string) (string, error) {
+		return filepath.Join(base, "users", userID, "skills"), nil
+	})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	mustCreateShared(t, mgr, "team")
+	mustCreateShared(t, mgr, "dup")
+	mustCreate(t, mgr, "alice", "mine")
+	mustCreate(t, mgr, "alice", "dup") // shadows the shared "dup"
+
+	cases := map[string]string{
+		"write-skill": "builtin",
+		"mine":        "private",
+		"team":        "shared",
+		"dup":         "private",
+		"ghost":       "",
+	}
+	for name, want := range cases {
+		if got := mgr.Scope("alice", name); got != want {
+			t.Errorf("Scope(alice, %q) = %q, want %q", name, got, want)
+		}
+	}
+	// Bob has no private skills, so "dup" resolves to the shared tier for him.
+	if got := mgr.Scope("bob", "dup"); got != "shared" {
+		t.Errorf("Scope(bob, dup) = %q, want shared", got)
+	}
+}
+
+// TestRefreshPicksUpDiskChanges verifies that Refresh rescans both the shared
+// and per-user registries so skills added directly on disk become visible.
+func TestRefreshPicksUpDiskChanges(t *testing.T) {
+	base := t.TempDir()
+	globalDir := filepath.Join(base, "global")
+	userBase := filepath.Join(base, "users")
+	mgr, err := NewManager(globalDir, func(userID string) (string, error) {
+		return filepath.Join(userBase, userID, "skills"), nil
+	})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	// Ensure alice's registry exists before we touch disk behind its back.
+	mgr.List("alice")
+
+	writeSkillDir(t, filepath.Join(globalDir, "ops"), "ops")
+	writeSkillDir(t, filepath.Join(userBase, "alice", "skills", "diary"), "diary")
+
+	if _, ok := mgr.Get("alice", "ops"); ok {
+		t.Fatal("disk-added shared skill should not be visible before refresh")
+	}
+	if _, ok := mgr.Get("alice", "diary"); ok {
+		t.Fatal("disk-added private skill should not be visible before refresh")
+	}
+
+	if err := mgr.Reload("alice"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, ok := mgr.Get("alice", "ops"); !ok {
+		t.Fatal("refresh should pick up the disk-added shared skill")
+	}
+	if _, ok := mgr.Get("alice", "diary"); !ok {
+		t.Fatal("refresh should pick up the disk-added private skill")
+	}
+}
+
+func mustCreate(t *testing.T, mgr *Manager, userID, name string) {
+	t.Helper()
+	md := "---\nname: " + name + "\ndescription: " + name + "\n---\n# " + name + "\n"
+	if err := mgr.Create(userID, name, md, "", ""); err != nil {
+		t.Fatalf("create %q: %v", name, err)
+	}
+}
+
+func mustCreateShared(t *testing.T, mgr *Manager, name string) {
+	t.Helper()
+	md := "---\nname: " + name + "\ndescription: " + name + "\n---\n# " + name + "\n"
+	if err := mgr.CreateShared(name, md, "", ""); err != nil {
+		t.Fatalf("create shared %q: %v", name, err)
+	}
+}
+
+// writeSkillDir writes a minimal SKILL.md folder directly on disk, bypassing the
+// manager, to simulate an out-of-band change a Refresh must discover.
+func writeSkillDir(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	md := "---\nname: " + name + "\ndescription: " + name + "\n---\n# " + name + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(md), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
 func hasSkill(skills []*Skill, name string) bool {
 	for _, s := range skills {
 		if s.Name == name {

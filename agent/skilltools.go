@@ -58,7 +58,7 @@ type listSkillsTool struct{ mgr *skill.Manager }
 
 func (t *listSkillsTool) Name() string { return "list_skills" }
 func (t *listSkillsTool) Description() string {
-	return "List all available skills with their descriptions and whether they are currently loaded into this conversation."
+	return "List all available skills with their descriptions, their scope (builtin, shared or private) and whether they are currently loaded into this conversation."
 }
 func (t *listSkillsTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
@@ -74,13 +74,14 @@ func (t *listSkillsTool) Execute(ctx context.Context, _ json.RawMessage) (string
 	}
 	var b strings.Builder
 	for _, s := range skills {
+		scope := t.mgr.Scope(userID, s.Name)
 		loaded := ""
 		if sess != nil {
 			if _, ok := sess.ActiveSkills[s.Name]; ok {
 				loaded = " [loaded]"
 			}
 		}
-		fmt.Fprintf(&b, "- %s%s: %s\n", s.Name, loaded, s.Description)
+		fmt.Fprintf(&b, "- %s [%s]%s: %s\n", s.Name, scope, loaded, s.Description)
 	}
 	return strings.TrimSpace(b.String()), nil
 }
@@ -205,10 +206,10 @@ type deleteSkillTool struct {
 
 func (t *deleteSkillTool) Name() string { return "delete_skill" }
 func (t *deleteSkillTool) Description() string {
-	return "Delete one of your skills, removing its entire folder (SKILL.md and any entry file) from your skills directory. Builtin skills cannot be deleted. Set shared=true to delete a shared skill visible to all users (owners only)."
+	return "Delete a skill, removing its entire folder (SKILL.md and any entry file). By default it deletes your own private skill. To delete a shared skill (visible to all users) you MUST set shared=true, which is restricted to owners. Check the skill's scope with list_skills first: deleting a shared skill removes it for everyone. Builtin skills cannot be deleted."
 }
 func (t *deleteSkillTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"The skill name to delete."},"shared":{"type":"boolean","description":"When true, delete a shared skill from the registry visible to all users (owners only). Defaults to deleting your private skill."}},"required":["name"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"The skill name to delete."},"shared":{"type":"boolean","description":"Set true to delete a shared skill visible to all users (owners only). Leave false/unset to delete your own private skill. Must match the skill's scope shown by list_skills."}},"required":["name"]}`)
 }
 func (t *deleteSkillTool) Dangerous(context.Context, json.RawMessage) bool { return true }
 func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -223,6 +224,7 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
+	scope := t.mgr.Scope(sess.UserID, a.Name)
 	if a.Shared {
 		if !canManageShared(t.owners, sess.UserID) {
 			return "", fmt.Errorf("only owners may delete shared skills")
@@ -230,15 +232,23 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 		if err := t.mgr.RemoveShared(a.Name); err != nil {
 			return "", err
 		}
-	} else if err := t.mgr.Remove(sess.UserID, a.Name); err != nil {
-		return "", err
+	} else {
+		// Guard the common mistake of deleting a shared skill without shared=true:
+		// be explicit that it is shared (and owner-gated) rather than silently
+		// reporting "does not exist".
+		if scope == "shared" {
+			return "", fmt.Errorf("%q is a shared skill visible to all users, not your private skill; deleting it requires shared=true (owners only)", a.Name)
+		}
+		if err := t.mgr.Remove(sess.UserID, a.Name); err != nil {
+			return "", err
+		}
 	}
 	delete(sess.ActiveSkills, a.Name)
-	scope := "private"
+	kind := "private"
 	if a.Shared {
-		scope = "shared"
+		kind = "shared"
 	}
-	return fmt.Sprintf("Deleted %s skill %q.", scope, a.Name), nil
+	return fmt.Sprintf("Deleted %s skill %q.", kind, a.Name), nil
 }
 
 // loadedSkillInstructions returns the instructions of all skills currently

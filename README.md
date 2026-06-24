@@ -118,14 +118,16 @@ The agent manages skills at runtime via dedicated tools — **not** the generic
 file tools — so files always land in the right place
 ([agent/skilltools.go](agent/skilltools.go)):
 
-- `list_skills` — enumerate available skills and whether each is loaded.
+- `list_skills` — enumerate available skills, each tagged with its scope
+  (`builtin` / `shared` / `private`) and whether it is loaded.
 - `load_skill` / `unload_skill` — pull a skill's full instructions into (or out
   of) the current conversation.
 - `create_skill` — author a new skill folder (`SKILL.md` + optional entry file).
   Pass `shared: true` (owners only) to publish it to the shared registry for all
   users instead of your private directory.
-- `delete_skill` — remove a skill folder. Pass `shared: true` (owners only) to
-  remove a shared skill.
+- `delete_skill` — remove a skill folder. Deletes your private skill by default;
+  pass `shared: true` (owners only) to remove a shared skill, which removes it
+  for every user.
 
 Frontmatter fields (parsed in [agent/skill/registry.go](agent/skill/registry.go)):
 
