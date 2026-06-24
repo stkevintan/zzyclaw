@@ -59,6 +59,25 @@ func TestParseDefaultsNoElevatedPerms(t *testing.T) {
 	}
 }
 
+func TestParseNetBlockSequence(t *testing.T) {
+	doc := "---\nname: greet\ndescription: x\nruntime: deno\nnet:\n  - api.example.com\n  - \"b.example.org\"\nwrite: yes\n---\n# Greet\n"
+	s := parse(doc)
+	if len(s.Net) != 2 || s.Net[0] != "api.example.com" || s.Net[1] != "b.example.org" {
+		t.Errorf("net = %v, want [api.example.com b.example.org]", s.Net)
+	}
+	if !s.Write {
+		t.Error("write = false, want true (write: yes)")
+	}
+}
+
+func TestParseNetWildcard(t *testing.T) {
+	doc := "---\nname: greet\ndescription: x\nruntime: deno\nnet:\n  - \"*\"\n---\n# Greet\n"
+	s := parse(doc)
+	if len(s.Net) != 1 || s.Net[0] != "*" {
+		t.Errorf("net = %v, want [*]", s.Net)
+	}
+}
+
 func TestParseNetNoneIsEmpty(t *testing.T) {
 	doc := "---\nname: greet\ndescription: x\nruntime: deno\nnet: none\n---\n# Greet\n"
 	s := parse(doc)

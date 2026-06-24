@@ -74,7 +74,16 @@ Opt into more only when the skill truly needs it, using frontmatter:
 - ` + "`write: true`" + ` — grant write access to the workspace directory. Use this only
   when the skill must persist files.
 - ` + "`net: example.com, api.example.org`" + ` — grant network access to ONLY the listed
-  hostnames (comma-separated). Omit for no network. Never use a wildcard.
+  hostnames. Accepts a comma/space-separated string or a YAML list:
+
+   ` + "```" + `
+   net:
+     - example.com
+     - api.example.org
+   ` + "```" + `
+
+  Omit for no network. Prefer scoping to exact hostnames; ` + "`net: \"*\"`" + ` grants
+  access to every host and should be avoided unless truly unavoidable.
 
    ` + "```" + `
    ---

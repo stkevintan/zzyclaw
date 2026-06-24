@@ -46,6 +46,19 @@ func TestDenoArgsGrantsScopedPermissions(t *testing.T) {
 	}
 }
 
+func TestDenoArgsNetWildcardGrantsAll(t *testing.T) {
+	argv := denoArgs("/skills/x/skill.js", nil, DenoPermissions{Net: []string{"*"}})
+	joined := strings.Join(argv, " ")
+	for _, a := range argv {
+		if strings.HasPrefix(a, "--allow-net=") {
+			t.Errorf("net=* should grant all network via bare --allow-net, got %q", a)
+		}
+	}
+	if !strings.Contains(joined, "--allow-net") {
+		t.Errorf("missing --allow-net for net=* in %v", argv)
+	}
+}
+
 func TestDenoRunnerNotInstalled(t *testing.T) {
 	r := NewDenoRunner("no-such-deno-binary-xyz", t.TempDir(), time.Second)
 	if r.Installed() {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -72,7 +73,14 @@ func denoArgs(entryPath string, scriptArgs []string, perms DenoPermissions) []st
 		argv = append(argv, "--allow-write="+strings.Join(perms.Write, ","))
 	}
 	if len(perms.Net) > 0 {
-		argv = append(argv, "--allow-net="+strings.Join(perms.Net, ","))
+		// A "*" entry means "any host": Deno grants all network access when
+		// --allow-net is passed without a value. Otherwise restrict to the
+		// listed hosts.
+		if slices.Contains(perms.Net, "*") {
+			argv = append(argv, "--allow-net")
+		} else {
+			argv = append(argv, "--allow-net="+strings.Join(perms.Net, ","))
+		}
 	}
 	argv = append(argv, entryPath)
 	argv = append(argv, scriptArgs...)

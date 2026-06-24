@@ -6,14 +6,16 @@
 package skill
 
 import (
-	"bufio"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+
+	yaml "go.yaml.in/yaml/v3"
 )
 
 // Skill is a parsed skill definition loaded from disk.
@@ -186,58 +188,72 @@ func (r *Registry) Remove(name string) error {
 	return r.Reload()
 }
 
-// parse splits SKILL.md into frontmatter (name/description) and instructions.
-// Frontmatter is delimited by a leading "---" / trailing "---" block; lines
-// inside use "key: value". Everything after the closing delimiter is the body.
+// frontmatter is the YAML header of a SKILL.md file. The custom types let net
+// and write accept either a scalar (net: "*", net: "a.com, b.com", write: true)
+// or a YAML sequence/bool, so both styles parse identically.
+type frontmatter struct {
+	Name        string    `yaml:"name"`
+	Description string    `yaml:"description"`
+	Runtime     string    `yaml:"runtime"`
+	Entry       string    `yaml:"entry"`
+	Net         netList   `yaml:"net"`
+	Write       writeFlag `yaml:"write"`
+}
+
+// netList accepts either a YAML sequence of hosts or a scalar string
+// ("*", "none", "false", or a comma/space-separated list).
+type netList []string
+
+func (n *netList) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		// Reuse splitList per item so each entry is trimmed/lowercased and the
+		// "none"/"false" sentinels are filtered, matching the scalar form.
+		var out []string
+		for _, item := range value.Content {
+			out = append(out, splitList(item.Value)...)
+		}
+		*n = out
+	default:
+		*n = splitList(value.Value)
+	}
+	return nil
+}
+
+// writeFlag accepts a YAML bool or a string ("true"/"yes"/"1"/"workspace").
+type writeFlag bool
+
+func (w *writeFlag) UnmarshalYAML(value *yaml.Node) error {
+	v := strings.ToLower(strings.TrimSpace(value.Value))
+	*w = writeFlag(v == "true" || v == "yes" || v == "1" || v == "workspace")
+	return nil
+}
+
+// parse splits SKILL.md into frontmatter (name/description/permissions) and
+// instructions. Frontmatter is a leading "---" / trailing "---" block parsed as
+// YAML; everything after the closing delimiter is the markdown body.
 func parse(content string) *Skill {
 	s := &Skill{}
-	sc := bufio.NewScanner(strings.NewReader(content))
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	var lines []string
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
-	}
-
-	idx := 0
-	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
-		// Parse frontmatter until the closing delimiter.
-		i := 1
-		for ; i < len(lines); i++ {
-			line := strings.TrimSpace(lines[i])
-			if line == "---" {
-				i++
-				break
-			}
-			key, val, found := strings.Cut(line, ":")
-			if !found {
-				continue
-			}
-			key = strings.TrimSpace(strings.ToLower(key))
-			val = strings.TrimSpace(val)
-			val = strings.Trim(val, `"'`)
-			switch key {
-			case "name":
-				s.Name = val
-			case "description":
-				s.Description = val
-			case "runtime":
-				s.Runtime = strings.ToLower(val)
-			case "entry":
-				s.Entry = val
-			case "net":
-				s.Net = splitList(val)
-			case "write":
-				v := strings.ToLower(val)
-				s.Write = v == "true" || v == "yes" || v == "1" || v == "workspace"
-			}
+	front, body := splitFrontmatter(content)
+	if front != "" {
+		var fm frontmatter
+		if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
+			// Surface malformed frontmatter rather than silently degrading to an
+			// instructions-only skill (e.g. a bad runtime/net line being dropped).
+			slog.Error("skill: parse frontmatter", "error", err)
+		} else {
+			s.Name = strings.TrimSpace(fm.Name)
+			s.Description = strings.TrimSpace(fm.Description)
+			s.Runtime = strings.ToLower(strings.TrimSpace(fm.Runtime))
+			s.Entry = strings.TrimSpace(fm.Entry)
+			s.Net = fm.Net
+			s.Write = bool(fm.Write)
 		}
-		idx = i
 	}
-	s.Instructions = strings.TrimSpace(strings.Join(lines[idx:], "\n"))
+	s.Instructions = strings.TrimSpace(body)
 	if s.Description == "" {
-		// Fall back to the first non-empty body line as a description.
-		for _, l := range lines[idx:] {
+		// Fall back to the first non-empty, non-heading body line.
+		for _, l := range strings.Split(s.Instructions, "\n") {
 			if t := strings.TrimSpace(l); t != "" && !strings.HasPrefix(t, "#") {
 				s.Description = t
 				break
@@ -245,6 +261,22 @@ func parse(content string) *Skill {
 		}
 	}
 	return s
+}
+
+// splitFrontmatter separates a leading "---"-delimited YAML block from the body.
+// When there is no well-formed frontmatter block it returns the whole content as
+// the body.
+func splitFrontmatter(content string) (front, body string) {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return "", content
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return strings.Join(lines[1:i], "\n"), strings.Join(lines[i+1:], "\n")
+		}
+	}
+	return "", content
 }
 
 // splitList parses a comma- or space-separated frontmatter value into a cleaned,
