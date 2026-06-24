@@ -96,11 +96,22 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("skill entry %q not found in skill %q", entry, a.Skill)
 	}
 
-	perms := tools.DenoPermissions{Read: []string{s.Dir}}
+	// Deno is launched with its working directory set to the skill dir, so any
+	// relative permission path would be resolved against it. Grant absolute paths
+	// so the workspace and skill dir are always located correctly.
+	absDir, err := filepath.Abs(s.Dir)
+	if err != nil {
+		return "", fmt.Errorf("absolute skill dir: %w", err)
+	}
+	perms := tools.DenoPermissions{Read: []string{absDir}}
 	if t.workspace != "" {
-		perms.Read = append(perms.Read, t.workspace)
+		absWorkspace, err := filepath.Abs(t.workspace)
+		if err != nil {
+			return "", fmt.Errorf("absolute workspace dir: %w", err)
+		}
+		perms.Read = append(perms.Read, absWorkspace)
 		if s.Write {
-			perms.Write = append(perms.Write, t.workspace)
+			perms.Write = append(perms.Write, absWorkspace)
 		}
 	}
 	perms.Net = s.Net

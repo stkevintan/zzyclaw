@@ -32,6 +32,11 @@ func NewDenoRunner(denoPath, cacheDir string, timeout time.Duration) *DenoRunner
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	// DENO_DIR is passed to Deno whose working directory is the skill dir; make it
+	// absolute so the cache never gets created inside the skill directory.
+	if abs, err := filepath.Abs(cacheDir); err == nil {
+		cacheDir = abs
+	}
 	return &DenoRunner{bin: denoPath, cacheDir: cacheDir, timeout: timeout}
 }
 

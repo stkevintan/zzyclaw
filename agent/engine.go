@@ -215,6 +215,9 @@ func (e *Engine) ownerAllowed(sess *Session) bool {
 	if len(e.owners) == 0 {
 		return true
 	}
+	if sess == nil {
+		return false
+	}
 	_, ok := e.owners[sess.UserID]
 	return ok
 }
