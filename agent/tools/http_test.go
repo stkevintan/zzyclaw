@@ -59,17 +59,33 @@ func TestFetchPolicyGetLimitsBody(t *testing.T) {
 	}
 }
 
-func TestHTTPGetDangerous(t *testing.T) {
-	if !NewHTTPGet(nil, time.Second).Dangerous(nil) {
-		t.Fatal("http_get must be dangerous (network egress needs approval)")
+func TestHTTPGetDangerousByHost(t *testing.T) {
+	tool := NewHTTPGet([]string{"example.com"}, time.Second)
+	// Allowlisted host: pre-trusted, no approval prompt.
+	if tool.Dangerous(json.RawMessage(`{"url":"https://example.com/x"}`)) {
+		t.Fatal("allowlisted host must not be dangerous")
+	}
+	// Any other host requires approval.
+	if !tool.Dangerous(json.RawMessage(`{"url":"https://evil.com/x"}`)) {
+		t.Fatal("non-allowlisted host must be dangerous (needs approval)")
+	}
+	// Malformed/empty URL forces the gate too.
+	if !tool.Dangerous(nil) {
+		t.Fatal("malformed args must be treated as dangerous")
 	}
 }
 
-func TestHTTPGetEmptyAllowlistRejects(t *testing.T) {
-	tool := NewHTTPGet(nil, time.Second)
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"https://example.com"}`))
-	if err == nil || !strings.Contains(err.Error(), "allowlist") {
-		t.Fatalf("expected allowlist error, got %v", err)
+func TestHTTPGetGrantScope(t *testing.T) {
+	g, ok := NewHTTPGet(nil, time.Second).(Grantable)
+	if !ok {
+		t.Fatal("http_get must implement Grantable")
+	}
+	key, label, ok := g.GrantScope(json.RawMessage(`{"url":"https://api.example.com/v1"}`))
+	if !ok || key != "http_get:api.example.com" {
+		t.Fatalf("GrantScope = (%q,%q,%v), want key http_get:api.example.com", key, label, ok)
+	}
+	if _, _, ok := g.GrantScope(json.RawMessage(`{"url":"not a url"}`)); ok {
+		t.Fatal("malformed URL must not be grantable")
 	}
 }
 
@@ -93,10 +109,9 @@ func TestHTTPGetFetchesAllowlisted(t *testing.T) {
 	}
 }
 
-func TestHTTPGetBlocksDisallowedHost(t *testing.T) {
-	tool := NewHTTPGet([]string{"example.com"}, time.Second)
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"https://evil.com/x"}`))
-	if err == nil || !strings.Contains(err.Error(), "allowlist") {
-		t.Fatalf("expected allowlist rejection, got %v", err)
+func TestHTTPGetRejectsMalformedURL(t *testing.T) {
+	tool := NewHTTPGet(nil, time.Second)
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"ftp://example.com/x"}`)); err == nil {
+		t.Fatal("expected error for non-http(s) URL")
 	}
 }

@@ -24,8 +24,11 @@ owners = []           # user IDs allowed to run dangerous tools (e.g. run_shell)
 shell_timeout_seconds = 120  # max wall-clock per run_shell command (builds/tests)
 
 # The http_get tool fetches URLs from trusted host code (NOT from inside the
-# sandbox). It is limited to these domains (host or any subdomain) and each call
-# requires approval. Empty list denies all network.
+# sandbox). Hosts listed here (host or any subdomain) are pre-trusted and reached
+# without prompting. Any other host triggers an approval prompt; replying
+# "always" remembers that host per user (stored in the shared store — Redis when
+# configured) so it is not asked again. An empty list simply means every host is
+# asked the first time.
 network_allowlist = []       # e.g. ["api.github.com", "wttr.in"]
 
 # Sandboxed skills run custom skill code inside the Deno sandbox. By default a

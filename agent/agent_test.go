@@ -81,21 +81,24 @@ func TestSessionManagerMultiSessionIsolation(t *testing.T) {
 
 func TestParseDecision(t *testing.T) {
 	cases := map[string]struct {
-		approved bool
+		decision Decision
 		ok       bool
 	}{
-		"yes":   {true, true},
-		"y":     {true, true},
-		"确认":    {true, true},
-		"no":    {false, true},
-		"取消":    {false, true},
-		"maybe": {false, false},
-		"":      {false, false},
+		"yes":    {DecisionApprove, true},
+		"y":      {DecisionApprove, true},
+		"确认":     {DecisionApprove, true},
+		"always": {DecisionAlways, true},
+		"始终":     {DecisionAlways, true},
+		"记住":     {DecisionAlways, true},
+		"no":     {DecisionDeny, true},
+		"取消":     {DecisionDeny, true},
+		"maybe":  {DecisionDeny, false},
+		"":       {DecisionDeny, false},
 	}
 	for in, want := range cases {
-		approved, ok := parseDecision(in)
-		if approved != want.approved || ok != want.ok {
-			t.Errorf("parseDecision(%q) = (%v,%v), want (%v,%v)", in, approved, ok, want.approved, want.ok)
+		decision, ok := parseDecision(in)
+		if decision != want.decision || ok != want.ok {
+			t.Errorf("parseDecision(%q) = (%v,%v), want (%v,%v)", in, decision, ok, want.decision, want.ok)
 		}
 	}
 }

@@ -27,6 +27,18 @@ type Tool interface {
 	Execute(ctx context.Context, args json.RawMessage) (string, error)
 }
 
+// Grantable is an optional interface a Tool can implement to support persistent,
+// scope-based approvals ("always allow"). When the user approves a dangerous
+// call with "always", the returned key is remembered so future calls with the
+// same scope skip the approval prompt.
+type Grantable interface {
+	// GrantScope returns a stable key identifying the resource a specific call
+	// touches (e.g. a network host or a workspace directory) plus a short human
+	// label for the prompt. ok=false means the call cannot be remembered and must
+	// be approved every time.
+	GrantScope(args json.RawMessage) (key, label string, ok bool)
+}
+
 // Registry is a concurrency-safe collection of tools keyed by name.
 type Registry struct {
 	mu    sync.RWMutex

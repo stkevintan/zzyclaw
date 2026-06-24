@@ -24,6 +24,11 @@ type PendingApproval struct {
 	Queue []copilot.ToolCall
 	// Description is the human-readable summary shown to the user.
 	Description string
+	// GrantKey, when non-empty, is the scope that "always" approval will persist
+	// so future equivalent calls skip the prompt (see tools.Grantable).
+	GrantKey string
+	// GrantLabel is the human-readable form of GrantKey shown in the prompt.
+	GrantLabel string
 }
 
 // Session holds the state of one conversation thread for a user. All access is

@@ -49,7 +49,7 @@ Built-in tools registered in [main.go](main.go):
 | `read_file`, `write_file`, `edit_file` | Structured file access within the sandboxed workspace |
 | `list_dir`, `search_files`, `delete_path` | Workspace inspection and cleanup |
 | `run_shell` | Build/run/lint/test commands (owner-gated, per-command checked) |
-| `http_get` | Fetch URLs from a configured host allowlist (approval-gated) |
+| `http_get` | Fetch URLs; pre-trusted hosts are allowlisted, others are approval-gated and can be remembered |
 | `run_skill` | Execute a skill's code in the Deno sandbox |
 | `list_skills`, `load_skill`, `unload_skill`, `create_skill`, `delete_skill` | Skill management |
 
@@ -60,6 +60,13 @@ Key safety mechanics:
 - **Auto-approve allowlist** — low-risk tools can be added to `auto_approve`;
   tools flagged "never auto-approve" (e.g. `run_shell`) are still evaluated per
   call.
+- **Remembered approvals** — when prompted for a dangerous action you can reply
+  `yes` (allow once), `always` (allow and remember the scope), or `no`. `always`
+  decisions are stored **per user** in the shared store (Redis when configured,
+  otherwise process-local) so equivalent calls skip the prompt: `http_get` is
+  remembered per host (growing the allowlist on demand), and file
+  writes/edits/deletes are remembered per workspace directory. One user's grants
+  never apply to another.
 - **Bounded loops** — `max_iterations` caps reasoning steps per turn and
   `max_history` caps stored messages per session.
 
@@ -156,7 +163,7 @@ Notable options ([config.example.toml](config.example.toml)):
 | `copilot.model` | Model used for inference (e.g. `gpt-4o`) |
 | `agent.owners` | User IDs allowed to approve dangerous tools |
 | `agent.auto_approve` | Tools that skip the approval prompt |
-| `agent.network_allowlist` | Hosts `http_get` may reach |
+| `agent.network_allowlist` | Hosts `http_get` reaches without prompting (others are asked once, then remembered if approved with `always`) |
 | `agent.skills_dir` / `agent.workspace_dir` | Skill and workspace roots |
 | `agent.deno_path` | Path to the Deno binary (empty = look up on `PATH`) |
 | `agent.skill_timeout_seconds` | Wall-clock budget per sandboxed skill run |
@@ -182,8 +189,8 @@ docker compose up --build
 `docker-compose.yml` runs the app as a non-root user with dropped Linux
 capabilities, `no-new-privileges`, a PID limit, and memory/CPU caps to contain
 the blast radius of shell/skill execution. Credentials, skills, and conversation
-data are persisted in the `app-data` Docker volume (inspect it with
-`docker compose exec app ls /app/data`).
+data are persisted in the `app-data` Docker volume (mounted at `/app/data`;
+inspect it with `docker compose exec app ls /app/data`).
 
 ## Project layout
 

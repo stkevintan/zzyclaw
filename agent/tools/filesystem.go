@@ -54,6 +54,24 @@ func (s *Sandbox) resolve(p string) (string, error) {
 // Roots returns the configured root directories (for prompt context).
 func (s *Sandbox) Roots() []string { return append([]string(nil), s.roots...) }
 
+// grantScopeForPath builds a directory-scoped grant key+label for a filesystem
+// mutation of path. The scope is the containing directory, so approving one edit
+// with "always" lets the agent keep modifying files in that same directory
+// without re-prompting. All mutating tools share the "fs_write" prefix so the
+// grant covers writes, edits and deletes alike. ok=false when the path can't be
+// resolved inside the sandbox (the call must then be approved every time).
+func grantScopeForPath(sb *Sandbox, rawPath string) (key, label string, ok bool) {
+	if rawPath == "" {
+		return "", "", false
+	}
+	abs, err := sb.resolve(rawPath)
+	if err != nil {
+		return "", "", false
+	}
+	dir := filepath.Dir(abs)
+	return "fs_write:" + dir, "file changes under " + dir, true
+}
+
 // --- read_file ---
 
 type readFileTool struct{ sb *Sandbox }
@@ -122,6 +140,17 @@ func (t *writeFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"content":{"type":"string","description":"Text content to write (or append)."},"append":{"type":"boolean","description":"If true, append to the file instead of overwriting it."}},"required":["path","content"]}`)
 }
 func (t *writeFileTool) Dangerous(json.RawMessage) bool { return true }
+
+// GrantScope remembers approval per target directory (see grantScopeForPath).
+func (t *writeFileTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", "", false
+	}
+	return grantScopeForPath(t.sb, a.Path)
+}
 func (t *writeFileTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path    string `json:"path"`
@@ -188,6 +217,17 @@ func (t *editFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"old_string":{"type":"string","description":"Exact text to find. Include enough surrounding context to match a single location."},"new_string":{"type":"string","description":"Replacement text."},"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring exactly one match."}},"required":["path","old_string","new_string"]}`)
 }
 func (t *editFileTool) Dangerous(json.RawMessage) bool { return true }
+
+// GrantScope remembers approval per target directory (see grantScopeForPath).
+func (t *editFileTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", "", false
+	}
+	return grantScopeForPath(t.sb, a.Path)
+}
 func (t *editFileTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path       string `json:"path"`
@@ -305,6 +345,17 @@ func (t *deletePathTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to delete, relative to the workspace root."}},"required":["path"]}`)
 }
 func (t *deletePathTool) Dangerous(json.RawMessage) bool { return true }
+
+// GrantScope remembers approval per target directory (see grantScopeForPath).
+func (t *deletePathTool) GrantScope(args json.RawMessage) (key, label string, ok bool) {
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", "", false
+	}
+	return grantScopeForPath(t.sb, a.Path)
+}
 func (t *deletePathTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path string `json:"path"`

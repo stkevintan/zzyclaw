@@ -27,7 +27,23 @@ type EngineConfig struct {
 	// empty, owner gating is disabled and any user may approve dangerous actions.
 	Owners  []string
 	Persona string
+	// Grants persists "always approve" decisions so repeated equivalent dangerous
+	// actions don't re-prompt. When nil, approvals are never remembered.
+	Grants GrantStore
 }
+
+// Decision is a user's response to an approval prompt for a dangerous action.
+type Decision int
+
+const (
+	// DecisionDeny rejects the pending action.
+	DecisionDeny Decision = iota
+	// DecisionApprove runs the pending action once without remembering it.
+	DecisionApprove
+	// DecisionAlways runs the pending action and remembers its grant scope so
+	// future equivalent calls skip the prompt.
+	DecisionAlways
+)
 
 // Engine runs the Reasoning-and-Acting loop: it repeatedly asks the model what
 // to do, executes any requested tool calls, and feeds the results back until the
@@ -43,6 +59,7 @@ type Engine struct {
 	autoApprove map[string]struct{}
 	owners      map[string]struct{}
 	persona     string
+	grants      GrantStore
 }
 
 // NewEngine constructs an engine from its dependencies and config.
@@ -72,6 +89,10 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 			owners[id] = struct{}{}
 		}
 	}
+	grants := cfg.Grants
+	if grants == nil {
+		grants = NewNoopGrantStore()
+	}
 	return &Engine{
 		client:      client,
 		tools:       toolReg,
@@ -82,6 +103,7 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 		autoApprove: auto,
 		owners:      owners,
 		persona:     persona,
+		grants:      grants,
 	}
 }
 
@@ -115,7 +137,7 @@ func (e *Engine) Run(ctx context.Context, sess *Session, userText string) (Outco
 
 // Resume continues a turn that was paused for approval, applying the user's
 // decision to the pending tool call.
-func (e *Engine) Resume(ctx context.Context, sess *Session, approved bool) (Outcome, error) {
+func (e *Engine) Resume(ctx context.Context, sess *Session, decision Decision) (Outcome, error) {
 	p := sess.Pending
 	sess.Pending = nil
 	if p == nil {
@@ -123,15 +145,22 @@ func (e *Engine) Resume(ctx context.Context, sess *Session, approved bool) (Outc
 	}
 
 	messages := p.Messages
-	if approved {
+	if decision == DecisionDeny {
+		messages = append(messages, toolResult(p.Call.ID, "The user denied this action. Do not retry it; continue without it or ask how to proceed."))
+	} else {
+		// Remember the scope first so that, even if the tool itself fails, the
+		// user's "always" choice persists for subsequent calls.
+		if decision == DecisionAlways && p.GrantKey != "" {
+			if err := e.grants.Grant(ctx, sess.UserID, p.GrantKey); err != nil {
+				slog.Warn("failed to persist approval grant", "key", p.GrantKey, "error", err)
+			}
+		}
 		if tool, ok := e.tools.Get(p.Call.Function.Name); ok {
 			result := e.exec(ctx, sess, tool, p.Call)
 			messages = append(messages, toolResult(p.Call.ID, result))
 		} else {
 			messages = append(messages, toolResult(p.Call.ID, "error: unknown tool"))
 		}
-	} else {
-		messages = append(messages, toolResult(p.Call.ID, "The user denied this action. Do not retry it; continue without it or ask how to proceed."))
 	}
 
 	// Process any remaining tool calls from the same assistant message.
@@ -199,6 +228,13 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 					"refused: this action requires elevated permission and the current user is not an authorized owner"))
 				continue
 			}
+			// A previously remembered ("always") grant for this scope skips the prompt.
+			grantKey, grantLabel := grantScope(tool, args)
+			if grantKey != "" && e.grants.Allowed(ctx, sess.UserID, grantKey) {
+				result := e.exec(ctx, sess, tool, call)
+				messages = append(messages, toolResult(call.ID, result))
+				continue
+			}
 			if _, auto := e.autoApprove[call.Function.Name]; !auto {
 				desc := describeCall(call)
 				sess.Pending = &PendingApproval{
@@ -206,9 +242,10 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 					Call:        call,
 					Queue:       append([]copilot.ToolCall(nil), calls[idx+1:]...),
 					Description: desc,
+					GrantKey:    grantKey,
+					GrantLabel:  grantLabel,
 				}
-				prompt := fmt.Sprintf("⚠️ I need your approval to run %s\n\nReply \"yes\" to approve or \"no\" to cancel.", desc)
-				return true, prompt, messages
+				return true, approvalPrompt(desc, grantLabel), messages
 			}
 		}
 
@@ -216,6 +253,29 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 		messages = append(messages, toolResult(call.ID, result))
 	}
 	return false, "", messages
+}
+
+// grantScope returns the persistable approval scope for a tool call, or empty
+// strings when the tool doesn't support remembered approvals.
+func grantScope(tool tools.Tool, args json.RawMessage) (key, label string) {
+	g, ok := tool.(tools.Grantable)
+	if !ok {
+		return "", ""
+	}
+	k, l, ok := g.GrantScope(args)
+	if !ok {
+		return "", ""
+	}
+	return k, l
+}
+
+// approvalPrompt builds the approval message. When the action can be remembered
+// (grantLabel is set), it offers an "always" option scoped to that resource.
+func approvalPrompt(desc, grantLabel string) string {
+	if grantLabel != "" {
+		return fmt.Sprintf("⚠️ I need your approval to run %s\n\nReply \"yes\" to allow once, \"always\" to allow and remember %s, or \"no\" to cancel.", desc, grantLabel)
+	}
+	return fmt.Sprintf("⚠️ I need your approval to run %s\n\nReply \"yes\" to approve or \"no\" to cancel.", desc)
 }
 
 // ownerAllowed reports whether the session's user may run dangerous tools. When

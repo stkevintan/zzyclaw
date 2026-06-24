@@ -152,11 +152,19 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	agentModel := orDefault(cfg.Agent.Model, cfg.Copilot.Model)
 	agentClient := copilot.NewClient(githubToken, copilot.WithModel(agentModel))
 
+	// Persistent, per-user access-control store: remembers each user's "always
+	// approve" decisions (e.g. an http_get host or a workspace directory) so the
+	// agent doesn't re-prompt for the same scope. It reuses the shared store, so
+	// grants get the same durability as conversation memory and session indexes
+	// (persistent with Redis, process-local otherwise).
+	grants := agent.NewStoreGrantStore(store)
+
 	engine := agent.NewEngine(agentClient, toolReg, skillReg, store, agent.EngineConfig{
 		MaxIterations: cfg.Agent.MaxIterations,
 		MaxHistory:    cfg.Agent.MaxHistory,
 		AutoApprove:   cfg.Agent.AutoApprove,
 		Owners:        cfg.Agent.Owners,
+		Grants:        grants,
 	})
 	sessions := agent.NewSessionManager(store)
 	return engine, sessions, skillReg, nil
