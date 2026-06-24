@@ -156,7 +156,7 @@ func (e *Engine) loop(ctx context.Context, sess *Session, messages []copilot.Mes
 		slog.Debug("agent completion",
 			"iter", iter,
 			"content", res.Content,
-			"tool_calls", toolCallsDebug(res.ToolCalls),
+			"tool_calls", toolCallsLog(res.ToolCalls),
 		)
 
 		if len(res.ToolCalls) == 0 {
@@ -246,16 +246,20 @@ func (e *Engine) exec(ctx context.Context, sess *Session, tool tools.Tool, call 
 	return out
 }
 
-// toolCallsDebug renders tool calls as compact JSON for debug logging.
-func toolCallsDebug(calls []copilot.ToolCall) string {
-	if len(calls) == 0 {
-		return ""
+// toolCallsLog renders tool calls as compact JSON for debug logging. It
+// implements slog.LogValuer so the marshaling is deferred until slog actually
+// emits the record (i.e. only when debug logging is enabled).
+type toolCallsLog []copilot.ToolCall
+
+func (c toolCallsLog) LogValue() slog.Value {
+	if len(c) == 0 {
+		return slog.StringValue("")
 	}
-	b, err := json.Marshal(calls)
+	b, err := json.Marshal([]copilot.ToolCall(c))
 	if err != nil {
-		return fmt.Sprintf("%v", calls)
+		return slog.StringValue(fmt.Sprintf("%v", []copilot.ToolCall(c)))
 	}
-	return string(b)
+	return slog.StringValue(string(b))
 }
 
 // fullMessages prepends the dynamic system prompt to the conversation.
