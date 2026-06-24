@@ -63,7 +63,7 @@ func TestDangerFlags(t *testing.T) {
 		NewDeletePath(sb): true,
 	}
 	for tool, want := range cases {
-		if got := tool.Dangerous(nil); got != want {
+		if got := tool.Dangerous(context.Background(), nil); got != want {
 			t.Errorf("%s.Dangerous()=%v, want %v", tool.Name(), got, want)
 		}
 	}
@@ -81,13 +81,13 @@ func TestWorkspaceWritesArePreApproved(t *testing.T) {
 	mutators := []Tool{NewWriteFile(sb), NewEditFile(sb), NewDeletePath(sb)}
 	for _, tool := range mutators {
 		// A path inside the workspace must not require approval.
-		if tool.Dangerous(json.RawMessage(`{"path":"notes.txt"}`)) {
+		if tool.Dangerous(context.Background(), json.RawMessage(`{"path":"notes.txt"}`)) {
 			t.Errorf("%s: workspace write should be pre-approved", tool.Name())
 		}
 		// A path inside the skills directory must still be gated.
 		skillPath := filepath.Join(skills, "evil", "SKILL.md")
 		args := json.RawMessage(`{"path":` + strconv.Quote(skillPath) + `}`)
-		if !tool.Dangerous(args) {
+		if !tool.Dangerous(context.Background(), args) {
 			t.Errorf("%s: skills-dir write should require approval", tool.Name())
 		}
 	}

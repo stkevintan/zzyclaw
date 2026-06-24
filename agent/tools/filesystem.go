@@ -221,7 +221,7 @@ func (t *readFileTool) Description() string {
 func (t *readFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"start_line":{"type":"integer","description":"Optional 1-based first line to read. Omit to start at the top."},"end_line":{"type":"integer","description":"Optional 1-based last line to read (inclusive). Omit to read to the end."}},"required":["path"]}`)
 }
-func (t *readFileTool) Dangerous(json.RawMessage) bool { return false }
+func (t *readFileTool) Dangerous(context.Context, json.RawMessage) bool { return false }
 func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path      string `json:"path"`
@@ -277,7 +277,7 @@ func (t *writeFileTool) Schema() json.RawMessage {
 
 // Dangerous gates writes outside the workspace (e.g. the skills directory);
 // writes within the workspace root are pre-approved.
-func (t *writeFileTool) Dangerous(args json.RawMessage) bool {
+func (t *writeFileTool) Dangerous(_ context.Context, args json.RawMessage) bool {
 	return mutationNeedsApproval(t.sb, args)
 }
 
@@ -359,7 +359,7 @@ func (t *editFileTool) Schema() json.RawMessage {
 
 // Dangerous gates edits outside the workspace (e.g. the skills directory);
 // edits within the workspace root are pre-approved.
-func (t *editFileTool) Dangerous(args json.RawMessage) bool {
+func (t *editFileTool) Dangerous(_ context.Context, args json.RawMessage) bool {
 	return mutationNeedsApproval(t.sb, args)
 }
 
@@ -441,7 +441,7 @@ func (t *listDirTool) Description() string {
 func (t *listDirTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Directory path relative to the workspace root. Use \".\" for the root."}},"required":["path"]}`)
 }
-func (t *listDirTool) Dangerous(json.RawMessage) bool { return false }
+func (t *listDirTool) Dangerous(context.Context, json.RawMessage) bool { return false }
 func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path string `json:"path"`
@@ -492,7 +492,7 @@ func (t *deletePathTool) Schema() json.RawMessage {
 
 // Dangerous gates deletions outside the workspace (e.g. the skills directory);
 // deletions within the workspace root are pre-approved.
-func (t *deletePathTool) Dangerous(args json.RawMessage) bool {
+func (t *deletePathTool) Dangerous(_ context.Context, args json.RawMessage) bool {
 	return mutationNeedsApproval(t.sb, args)
 }
 

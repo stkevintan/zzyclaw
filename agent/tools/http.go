@@ -51,7 +51,7 @@ func (t *httpGetTool) Schema() json.RawMessage {
 // Dangerous is true unless the URL's host is already on the static allowlist.
 // Hosts that are not pre-trusted go through the approval (and owner) gate, where
 // they can be approved once or remembered via GrantScope.
-func (t *httpGetTool) Dangerous(args json.RawMessage) bool {
+func (t *httpGetTool) Dangerous(_ context.Context, args json.RawMessage) bool {
 	host := hostFromArgs(args)
 	if host == "" {
 		// Malformed/unsupported URL: force the gate; Execute will surface the error.

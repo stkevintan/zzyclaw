@@ -74,24 +74,35 @@ Key safety mechanics:
 - **Per-user workspaces** — each user gets a private subdirectory of the
   workspace root. Relative paths, the `run_shell` working directory and a
   skill's workspace access are all confined to the calling user's own directory,
-  so one user can never read or write another user's files (the skills directory
-  remains shared, read-only by default).
+  so one user can never read or write another user's files.
+- **Per-user skills** — every skill the agent authors at runtime lives in the
+  calling user's own skills directory (`<workspace>/<user>/skills`). Users can
+  only list, load, run, create or delete their own skills; one user can never
+  see or invoke another user's skill by name. The compiled-in **builtin** skills
+  (e.g. `write-skill`) live in the shared skills root, are visible to everyone,
+  and cannot be overwritten or deleted by a user
+  ([agent/skill/manager.go](agent/skill/manager.go)).
 - **Bounded loops** — `max_iterations` caps reasoning steps per turn and
   `max_history` caps stored messages per session.
 
 ## 2. Skill management
 
-A **skill** is a self-contained directory under the skills root, each containing
+A **skill** is a self-contained directory, each containing
 a `SKILL.md` file with YAML-ish frontmatter (name, description, and optional
 runtime/permission fields) followed by markdown instructions. Executable skills
 also ship their entry source file (e.g. `skill.js`) in the same folder, so a
 skill can be installed or deleted as a single unit
-([agent/skill/registry.go](agent/skill/registry.go)).
+([agent/skill/registry.go](agent/skill/registry.go)). Shared **builtin** skills
+live in the global skills root, while each user's own skills live in their
+private `<workspace>/<user>/skills` directory; a manager layers the two so users
+share builtins but never see each other's skills
+([agent/skill/manager.go](agent/skill/manager.go)).
 
 ```
-<skills_dir>/
+<skills_dir>/            # shared builtins, visible to everyone
   write-skill/
     SKILL.md
+<workspace>/<user>/skills/   # private to one user
   my-skill/
     SKILL.md        # frontmatter + instructions
     skill.js        # entry code run by Deno (optional)

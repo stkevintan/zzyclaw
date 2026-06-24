@@ -32,23 +32,23 @@ func TestRunSkillGating(t *testing.T) {
 	mustMkdir(t, ndir)
 	mustWrite(t, filepath.Join(ndir, "SKILL.md"), "---\nname: doc\ndescription: y\n---\n# Doc\n")
 
-	reg, err := skill.NewRegistry(dir)
+	mgr, err := skill.NewManager(dir, nil)
 	if err != nil {
-		t.Fatalf("registry: %v", err)
+		t.Fatalf("manager: %v", err)
 	}
-	if err := reg.Reload(); err != nil {
+	if err := mgr.Reload(""); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 
 	runner := tools.NewDenoRunner(filepath.Join(dir, "no-such-deno-binary"), filepath.Join(dir, "cache"), time.Second) // not installed
-	tool := RunSkillTool(reg, runner, "")
+	tool := RunSkillTool(mgr, runner, "")
 
 	// Read-only, no-network skill: frictionless (not dangerous).
-	if tool.Dangerous(json.RawMessage(`{"skill":"greet"}`)) {
+	if tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"greet"}`)) {
 		t.Error("read-only no-network skill must not be dangerous")
 	}
 	// Network skill: requires approval.
-	if !tool.Dangerous(json.RawMessage(`{"skill":"fetcher"}`)) {
+	if !tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"fetcher"}`)) {
 		t.Error("network skill must be dangerous (needs approval)")
 	}
 

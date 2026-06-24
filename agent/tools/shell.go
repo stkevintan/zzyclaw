@@ -49,7 +49,7 @@ func (t *shellTool) Schema() json.RawMessage {
 // Dangerous returns false only for simple read-only inspection commands, which
 // run without an approval prompt. Everything else (and any command we cannot
 // parse) requires approval.
-func (t *shellTool) Dangerous(args json.RawMessage) bool {
+func (t *shellTool) Dangerous(_ context.Context, args json.RawMessage) bool {
 	var a struct {
 		Command string `json:"command"`
 	}

@@ -62,15 +62,15 @@ func TestFetchPolicyGetLimitsBody(t *testing.T) {
 func TestHTTPGetDangerousByHost(t *testing.T) {
 	tool := NewHTTPGet([]string{"example.com"}, time.Second)
 	// Allowlisted host: pre-trusted, no approval prompt.
-	if tool.Dangerous(json.RawMessage(`{"url":"https://example.com/x"}`)) {
+	if tool.Dangerous(context.Background(), json.RawMessage(`{"url":"https://example.com/x"}`)) {
 		t.Fatal("allowlisted host must not be dangerous")
 	}
 	// Any other host requires approval.
-	if !tool.Dangerous(json.RawMessage(`{"url":"https://evil.com/x"}`)) {
+	if !tool.Dangerous(context.Background(), json.RawMessage(`{"url":"https://evil.com/x"}`)) {
 		t.Fatal("non-allowlisted host must be dangerous (needs approval)")
 	}
 	// Malformed/empty URL forces the gate too.
-	if !tool.Dangerous(nil) {
+	if !tool.Dangerous(context.Background(), nil) {
 		t.Fatal("malformed args must be treated as dangerous")
 	}
 }

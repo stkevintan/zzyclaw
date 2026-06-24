@@ -36,7 +36,7 @@ func (t *searchFilesTool) Description() string {
 func (t *searchFilesTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression to search for."},"path":{"type":"string","description":"File or directory to search, relative to the workspace root. Defaults to the whole workspace."},"glob":{"type":"string","description":"Optional filename glob filter, e.g. \"*.go\" or \"*.py\"."},"ignore_case":{"type":"boolean","description":"Case-insensitive search when true."},"max_results":{"type":"integer","description":"Maximum number of matching lines to return (default 100)."}},"required":["pattern"]}`)
 }
-func (t *searchFilesTool) Dangerous(json.RawMessage) bool { return false }
+func (t *searchFilesTool) Dangerous(context.Context, json.RawMessage) bool { return false }
 
 func (t *searchFilesTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
