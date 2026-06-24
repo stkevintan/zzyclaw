@@ -1,9 +1,36 @@
 package skill
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
+
+// TestBuiltinsCompiledInNotOnDisk verifies that builtin skills are served from
+// memory (compiled into the binary) and never written to the shared skills dir.
+func TestBuiltinsCompiledInNotOnDisk(t *testing.T) {
+	base := t.TempDir()
+	globalDir := filepath.Join(base, "global")
+
+	mgr, err := NewManager(globalDir, nil)
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+
+	// The builtin is resolvable and marked Builtin...
+	s, ok := mgr.Get("", "write-skill")
+	if !ok {
+		t.Fatal("expected builtin write-skill to be served from memory")
+	}
+	if !s.Builtin || s.Instructions == "" {
+		t.Errorf("write-skill should be a non-empty builtin, got builtin=%v", s.Builtin)
+	}
+
+	// ...but nothing was seeded to disk.
+	if _, err := os.Stat(filepath.Join(globalDir, "write-skill")); !os.IsNotExist(err) {
+		t.Error("write-skill must not be written to the shared skills directory")
+	}
+}
 
 // TestManagerPerUserIsolation verifies that a skill created by one user is
 // invisible to and unusable by another, while builtin skills are shared.

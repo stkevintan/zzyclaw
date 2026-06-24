@@ -7,13 +7,16 @@ import (
 )
 
 // Manager layers a private, per-user skill registry over a shared set of builtin
-// skills. Builtin skills (seeded into the global directory) are visible to every
-// user but owned by none: they cannot be created, overwritten or deleted by a
-// user. Every other skill lives in the calling user's own directory and is
-// invisible to — and unusable by — any other user.
+// skills. Builtin skills are compiled into the binary and served from memory
+// (see builtinSkills); they are visible to every user but owned by none — they
+// cannot be created, overwritten or deleted by a user. The global registry holds
+// any additional operator-provided shared skills on disk. Every other skill
+// lives in the calling user's own directory and is invisible to — and unusable
+// by — any other user.
 //
-// All user-scoped methods take a userID. With an empty userID only the global
-// builtin skills are visible (used for non-user contexts such as tests).
+// All user-scoped methods take a userID. With an empty userID only the builtin
+// (and any shared on-disk) skills are visible (used for non-user contexts such
+// as tests).
 type Manager struct {
 	global *Registry
 
@@ -26,14 +29,12 @@ type Manager struct {
 	users map[string]*Registry // userID -> that user's registry (created lazily)
 }
 
-// NewManager builds a manager whose builtin skills live in globalDir (seeded on
-// creation) and whose per-user skills live in the directory returned by userDir.
+// NewManager builds a manager whose builtin skills are compiled in (served from
+// memory). globalDir is an optional shared directory for operator-provided
+// skills, and per-user skills live in the directory returned by userDir.
 func NewManager(globalDir string, userDir func(userID string) (string, error)) (*Manager, error) {
 	g, err := NewRegistry(globalDir)
 	if err != nil {
-		return nil, err
-	}
-	if err := g.Seed(); err != nil {
 		return nil, err
 	}
 	return &Manager{
@@ -75,30 +76,44 @@ func (m *Manager) userRegistry(userID string) (*Registry, error) {
 	return reg, nil
 }
 
-// List returns the builtin skills plus userID's own skills, sorted by name. A
-// user skill can never shadow a builtin (those names are reserved).
+// List returns the builtin skills plus any shared on-disk skills and userID's
+// own skills, sorted by name. A disk skill can never shadow a builtin (those
+// names are reserved), and duplicate names are reported once.
 func (m *Manager) List(userID string) []*Skill {
-	out := m.global.List()
-	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
-		for _, s := range ur.List() {
-			if builtinSkills[s.Name] {
+	out := builtinList()
+	seen := make(map[string]bool, len(out))
+	for _, s := range out {
+		seen[s.Name] = true
+	}
+	add := func(skills []*Skill) {
+		for _, s := range skills {
+			if seen[s.Name] {
 				continue
 			}
+			seen[s.Name] = true
 			out = append(out, s)
 		}
+	}
+	add(m.global.List())
+	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
+		add(ur.List())
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// Get resolves a skill by name for userID, checking the shared builtins first
-// and then the user's own skills. It never returns another user's skill.
+// Get resolves a skill by name for userID, checking the compiled-in builtins
+// first, then any shared on-disk skills, then the user's own skills. It never
+// returns another user's skill.
 func (m *Manager) Get(userID, name string) (*Skill, bool) {
-	if s, ok := m.global.Get(name); ok {
+	if s, ok := builtinSkills[name]; ok {
+		return s, true
+	}
+	if s, ok := m.global.Get(name); ok && !builtinSkillSet[s.Name] {
 		return s, true
 	}
 	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
-		if s, ok := ur.Get(name); ok && !builtinSkills[s.Name] {
+		if s, ok := ur.Get(name); ok && !builtinSkillSet[s.Name] {
 			return s, true
 		}
 	}

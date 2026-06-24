@@ -67,24 +67,6 @@ func TestParseNetNoneIsEmpty(t *testing.T) {
 	}
 }
 
-func TestSeedMarksBuiltin(t *testing.T) {
-	dir := t.TempDir()
-	r, err := NewRegistry(dir)
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-	if err := r.Seed(); err != nil {
-		t.Fatalf("Seed: %v", err)
-	}
-	s, ok := r.Get("write-skill")
-	if !ok {
-		t.Fatal("expected write-skill to be seeded")
-	}
-	if !s.Builtin {
-		t.Error("write-skill should be marked Builtin")
-	}
-}
-
 func TestCreateAndRemoveSkill(t *testing.T) {
 	dir := t.TempDir()
 	r, err := NewRegistry(dir)
@@ -152,19 +134,5 @@ func TestBuiltinSkillProtected(t *testing.T) {
 	}
 	if err := r.Remove("write-skill"); err == nil {
 		t.Error("expected error deleting builtin skill")
-	}
-}
-
-func TestSeedAndReload(t *testing.T) {
-	dir := t.TempDir()
-	r, err := NewRegistry(dir)
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-	if err := r.Seed(); err != nil {
-		t.Fatalf("Seed: %v", err)
-	}
-	if _, ok := r.Get("write-skill"); !ok {
-		t.Fatal("expected write-skill to be seeded")
 	}
 }
