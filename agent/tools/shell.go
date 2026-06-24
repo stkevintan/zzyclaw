@@ -74,9 +74,12 @@ func (t *shellTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 		return "", err
 	}
 
-	dir := t.sb.Roots()[0]
+	dir, err := t.sb.workspaceDir(ctx)
+	if err != nil {
+		return "", err
+	}
 	if a.Cwd != "" {
-		resolved, err := t.sb.resolve(a.Cwd)
+		resolved, err := t.sb.resolveCtx(ctx, a.Cwd)
 		if err != nil {
 			return "", err
 		}

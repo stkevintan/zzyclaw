@@ -3,6 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +66,74 @@ func TestDangerFlags(t *testing.T) {
 		if got := tool.Dangerous(nil); got != want {
 			t.Errorf("%s.Dangerous()=%v, want %v", tool.Name(), got, want)
 		}
+	}
+}
+
+func TestWorkspaceWritesArePreApproved(t *testing.T) {
+	workspace := t.TempDir()
+	skills := t.TempDir()
+	// roots[0] is the workspace (pre-approved); roots[1] is the skills dir (gated).
+	sb, err := NewSandbox(workspace, skills)
+	if err != nil {
+		t.Fatalf("NewSandbox: %v", err)
+	}
+
+	mutators := []Tool{NewWriteFile(sb), NewEditFile(sb), NewDeletePath(sb)}
+	for _, tool := range mutators {
+		// A path inside the workspace must not require approval.
+		if tool.Dangerous(json.RawMessage(`{"path":"notes.txt"}`)) {
+			t.Errorf("%s: workspace write should be pre-approved", tool.Name())
+		}
+		// A path inside the skills directory must still be gated.
+		skillPath := filepath.Join(skills, "evil", "SKILL.md")
+		args := json.RawMessage(`{"path":` + strconv.Quote(skillPath) + `}`)
+		if !tool.Dangerous(args) {
+			t.Errorf("%s: skills-dir write should require approval", tool.Name())
+		}
+	}
+}
+
+func TestPerUserWorkspaceIsolation(t *testing.T) {
+	workspace := t.TempDir()
+	sb, err := NewSandbox(workspace)
+	if err != nil {
+		t.Fatalf("NewSandbox: %v", err)
+	}
+	w := NewWriteFile(sb)
+	r := NewReadFile(sb)
+	l := NewListDir(sb)
+
+	alice := WithUser(context.Background(), "alice")
+	bob := WithUser(context.Background(), "bob")
+
+	// Alice writes a file at a relative path.
+	if _, err := w.Execute(alice, json.RawMessage(`{"path":"secret.txt","content":"alice-only"}`)); err != nil {
+		t.Fatalf("alice write: %v", err)
+	}
+
+	// The file must physically land in alice's own subdirectory.
+	if _, err := os.Stat(filepath.Join(workspace, "alice", "secret.txt")); err != nil {
+		t.Fatalf("expected alice/secret.txt to exist: %v", err)
+	}
+
+	// Bob, using the same relative path, must NOT see Alice's content.
+	if _, err := r.Execute(bob, json.RawMessage(`{"path":"secret.txt"}`)); err == nil {
+		t.Fatal("bob should not be able to read alice's file via the same relative path")
+	}
+
+	// Bob's directory listing must not contain Alice's file.
+	out, err := l.Execute(bob, json.RawMessage(`{"path":"."}`))
+	if err != nil {
+		t.Fatalf("bob list: %v", err)
+	}
+	if strings.Contains(out, "secret.txt") {
+		t.Fatalf("bob's listing leaked alice's file: %q", out)
+	}
+
+	// Bob cannot escape into Alice's directory with an absolute path either.
+	abs := filepath.Join(workspace, "alice", "secret.txt")
+	if _, err := r.Execute(bob, json.RawMessage(`{"path":`+strconv.Quote(abs)+`}`)); err == nil {
+		t.Fatal("bob should not reach alice's workspace via an absolute path")
 	}
 }
 

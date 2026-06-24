@@ -12,14 +12,22 @@ RUN CGO_ENABLED=0 go build -o /zzy .
 FROM debian:bookworm-slim
 
 # Runtime deps: TLS roots, CJK fonts, ripgrep (search_files tool) and python3 +
-# markitdown (the resume extraction feature converts PDF/DOCX).
+# markitdown (the resume extraction feature converts PDF/DOCX). curl plus a few
+# common CLI utilities are handy for the agent's shell tool and debugging.
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
 	fonts-noto-cjk \
 	ripgrep \
+	curl \
+	wget \
+	jq \
+	git \
+	less \
+	procps \
 	python3 \
 	python3-pip && \
 	pip install --no-cache-dir --break-system-packages 'markitdown[pdf,docx]' && \
+	ln -sf /usr/bin/python3 /usr/local/bin/python && \
 	rm -rf /var/lib/apt/lists/*
 
 # Run as an unprivileged user. Root inside a container still shares the host
@@ -41,6 +49,8 @@ COPY --from=builder /zzy /usr/local/bin/zzy
 COPY --from=denoland/deno:bin-2.1.4 /deno /usr/local/bin/deno
 
 # /app holds the mounted data volume (writable) and the read-only config file.
+# Pre-create /app/data owned by appuser so a fresh named volume mounted there
+# inherits writable ownership.
 WORKDIR /app
 RUN mkdir -p /app/data && \
 	chown -R appuser:app /app /home/appuser

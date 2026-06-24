@@ -64,7 +64,7 @@ func (m *Middleware) HandleMessage(ctx context.Context, msg *wechatbot.IncomingM
 	if sess.Pending != nil {
 		decision, ok := parseDecision(text)
 		if !ok {
-			m.Reply(ctx, msg, "请回复 \"yes\" 批准，或 \"no\" 取消上一步操作。")
+			m.Reply(ctx, msg, "请回复 \"yes\" 批准本次，\"always\" 批准并记住，或 \"no\" 取消上一步操作。")
 			return true
 		}
 		outcome, err := m.engine.Resume(ctx, sess, decision)
@@ -193,13 +193,16 @@ func (m *Middleware) sessionDeleteCurrent(ctx context.Context, msg *wechatbot.In
 }
 
 // parseDecision interprets an approval reply. The second return value is false
-// if the text is not recognizably yes or no.
-func parseDecision(text string) (approved bool, ok bool) {
+// if the text is not a recognized decision. "always" approves and asks the
+// engine to remember the action's scope; "yes" approves only the current call.
+func parseDecision(text string) (Decision, bool) {
 	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "always", "always allow", "remember", "始终", "总是", "记住", "永久", "一直":
+		return DecisionAlways, true
 	case "yes", "y", "ok", "approve", "确认", "是", "好", "同意", "可以":
-		return true, true
+		return DecisionApprove, true
 	case "no", "n", "cancel", "deny", "取消", "否", "不", "不行", "拒绝":
-		return false, true
+		return DecisionDeny, true
 	}
-	return false, false
+	return DecisionDeny, false
 }

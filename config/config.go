@@ -44,7 +44,7 @@ type AgentConfig struct {
 
 	ShellTimeoutSeconds int `mapstructure:"shell_timeout_seconds"` // max wall-clock per run_shell command
 
-	NetworkAllowlist []string `mapstructure:"network_allowlist"` // domains the http_get tool may reach (host or *.host); empty denies all network
+	NetworkAllowlist []string `mapstructure:"network_allowlist"` // pre-trusted domains the http_get tool reaches without prompting (host or *.host); other hosts require per-host approval
 
 	DenoPath            string `mapstructure:"deno_path"`             // path to the Deno binary for sandboxed skills; empty => look up "deno" on PATH
 	SkillTimeoutSeconds int    `mapstructure:"skill_timeout_seconds"` // max wall-clock per sandboxed run_skill execution
