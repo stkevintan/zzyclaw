@@ -29,9 +29,10 @@ type PendingApproval struct {
 // Session holds the state of one conversation thread for a user. All access is
 // guarded by Mu so a single conversation's turns are serialized.
 type Session struct {
-	ID  string // per-user session identifier
-	Key string // store key for this session's history
-	Mu  sync.Mutex
+	ID     string // per-user session identifier
+	Key    string // store key for this session's history
+	UserID string // owner of this session (used for permission gating)
+	Mu     sync.Mutex
 
 	History      []copilot.Message
 	ActiveSkills map[string]struct{}
@@ -132,7 +133,7 @@ func (us *userSessions) getOrLoadLocked(ctx context.Context, store Store, id str
 	if s, ok := us.live[id]; ok {
 		return s
 	}
-	s := &Session{ID: id, Key: historyKey(us.userID, id), ActiveSkills: make(map[string]struct{})}
+	s := &Session{ID: id, Key: historyKey(us.userID, id), UserID: us.userID, ActiveSkills: make(map[string]struct{})}
 	if h, err := store.Load(ctx, s.Key); err == nil && len(h) > 0 {
 		s.History = h
 	}

@@ -89,9 +89,8 @@ func main() {
 func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*agent.Engine, *agent.SessionManager, *skill.Registry, error) {
 	agentBase := filepath.Join(cfg.DataDir, "agent")
 	skillsDir := orDefault(cfg.Agent.SkillsDir, filepath.Join(agentBase, "skills"))
-	scriptsDir := orDefault(cfg.Agent.ScriptsDir, filepath.Join(agentBase, "scripts"))
 	workspaceDir := orDefault(cfg.Agent.WorkspaceDir, filepath.Join(agentBase, "workspace"))
-	for _, d := range []string{skillsDir, scriptsDir, workspaceDir} {
+	for _, d := range []string{skillsDir, workspaceDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return nil, nil, nil, err
 		}
@@ -116,22 +115,36 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := skillReg.Seed(scriptsDir); err != nil {
+	if err := skillReg.Seed(); err != nil {
 		slog.Warn("failed to seed default skills", "error", err)
 	}
 
-	sandbox, err := tools.NewSandbox(workspaceDir, skillsDir, scriptsDir)
+	sandbox, err := tools.NewSandbox(workspaceDir, skillsDir)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	toolReg := tools.NewRegistry()
 	toolReg.Register(tools.NewReadFile(sandbox))
 	toolReg.Register(tools.NewWriteFile(sandbox))
+	toolReg.Register(tools.NewEditFile(sandbox))
 	toolReg.Register(tools.NewListDir(sandbox))
 	toolReg.Register(tools.NewDeletePath(sandbox))
 	toolReg.Register(tools.NewSearchFiles(sandbox, 30*time.Second))
-	toolReg.Register(tools.NewRunScript(scriptsDir, 60*time.Second))
-	toolReg.Register(tools.NewPipInstall(180 * time.Second))
+	toolReg.Register(tools.NewShell(sandbox, time.Duration(cfg.Agent.ShellTimeoutSeconds)*time.Second))
+	toolReg.Register(tools.NewHTTPGet(cfg.Agent.NetworkAllowlist, 30*time.Second))
+
+	// Sandboxed skills: their code runs inside the Deno sandbox. By default a
+	// skill gets read-only access to its own directory and the workspace and no
+	// network; skills may opt into workspace writes or specific network hosts.
+	denoCacheDir := filepath.Join(agentBase, "deno-cache")
+	denoRunner := tools.NewDenoRunner(cfg.Agent.DenoPath, denoCacheDir, time.Duration(cfg.Agent.SkillTimeoutSeconds)*time.Second)
+	toolReg.Register(agent.RunSkillTool(skillReg, denoRunner, workspaceDir))
+	if denoRunner.Installed() {
+		slog.Info("deno skills enabled", "deno", denoRunner.Path())
+	} else {
+		slog.Info("deno skills inactive: deno not found (install Deno or set agent.deno_path)")
+	}
+
 	for _, t := range agent.SkillTools(skillReg) {
 		toolReg.Register(t)
 	}
@@ -143,6 +156,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		MaxIterations: cfg.Agent.MaxIterations,
 		MaxHistory:    cfg.Agent.MaxHistory,
 		AutoApprove:   cfg.Agent.AutoApprove,
+		Owners:        cfg.Agent.Owners,
 	})
 	sessions := agent.NewSessionManager(store)
 	return engine, sessions, skillReg, nil

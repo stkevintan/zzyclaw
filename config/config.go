@@ -38,9 +38,16 @@ type AgentConfig struct {
 	MaxIterations int      `mapstructure:"max_iterations"` // max ReAct steps per turn
 	MaxHistory    int      `mapstructure:"max_history"`    // max stored messages per session
 	SkillsDir     string   `mapstructure:"skills_dir"`     // defaults to <data_dir>/agent/skills
-	ScriptsDir    string   `mapstructure:"scripts_dir"`    // defaults to <data_dir>/agent/scripts
 	WorkspaceDir  string   `mapstructure:"workspace_dir"`  // defaults to <data_dir>/agent/workspace
 	AutoApprove   []string `mapstructure:"auto_approve"`   // tool names that skip the approval prompt
+	Owners        []string `mapstructure:"owners"`         // user IDs allowed to run dangerous tools; empty disables the gate
+
+	ShellTimeoutSeconds int `mapstructure:"shell_timeout_seconds"` // max wall-clock per run_shell command
+
+	NetworkAllowlist []string `mapstructure:"network_allowlist"` // domains the http_get tool may reach (host or *.host); empty denies all network
+
+	DenoPath            string `mapstructure:"deno_path"`             // path to the Deno binary for sandboxed skills; empty => look up "deno" on PATH
+	SkillTimeoutSeconds int    `mapstructure:"skill_timeout_seconds"` // max wall-clock per sandboxed run_skill execution
 }
 
 // SlogLevel converts the configured log level string to slog.Level.
@@ -74,9 +81,10 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.max_iterations", 12)
 	v.SetDefault("agent.max_history", 40)
 	v.SetDefault("agent.skills_dir", "")
-	v.SetDefault("agent.scripts_dir", "")
 	v.SetDefault("agent.workspace_dir", "")
-
+	v.SetDefault("agent.shell_timeout_seconds", 120)
+	v.SetDefault("agent.deno_path", "")
+	v.SetDefault("agent.skill_timeout_seconds", 30)
 	// Config file
 	v.SetConfigName("config")
 	v.SetConfigType("toml")
