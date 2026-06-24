@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,11 +104,30 @@ func (r *DenoRunner) Run(ctx context.Context, entryPath string, scriptArgs []str
 		"NO_COLOR=1",
 	}
 
+	// When log.level=debug, dump the exact command we hand to Deno so module
+	// resolution / permission failures can be diagnosed.
+	slog.Debug("deno skill: exec",
+		"argv", cmd.Args,
+		"dir", cmd.Dir,
+		"deno_dir", r.cacheDir,
+		"read", perms.Read,
+		"write", perms.Write,
+		"net", perms.Net,
+	)
+
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	err := cmd.Run()
-	out := truncateOutput(strings.TrimSpace(buf.String()))
+	raw := strings.TrimSpace(buf.String())
+	out := truncateOutput(raw)
+
+	// Dump the full, untruncated stdout+stderr (and exit status) at debug level.
+	slog.Debug("deno skill: result",
+		"entry", entryPath,
+		"err", err,
+		"output", raw,
+	)
 
 	if cctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("sandboxed skill timed out after %s", r.timeout)

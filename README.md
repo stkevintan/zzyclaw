@@ -207,3 +207,18 @@ go build ./...
 go test ./...
 golangci-lint run ./...   # v2.x (CI uses golangci-lint-action@v7)
 ```
+
+### Troubleshooting
+
+Set `log.level = "debug"` in `config.toml` (or `ZZY_LOG_LEVEL=debug`) to dump
+diagnostic detail to the console, including:
+
+- each model completion (final text and the tool calls it requests);
+- every tool call's arguments and result;
+- the exact Deno command, granted permissions, and the full (untruncated)
+  stdout/stderr of each sandboxed skill run.
+
+This is the quickest way to see why a `runtime: deno` skill fails — e.g. a
+"module not found" error usually means the skill imports a remote/`npm:`/`jsr:`
+module, which the sandbox blocks (`--no-remote`); only local files within the
+skill directory and the standard library are available.
