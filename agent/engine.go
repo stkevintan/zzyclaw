@@ -22,7 +22,10 @@ type EngineConfig struct {
 	MaxIterations int
 	MaxHistory    int
 	AutoApprove   []string
-	Persona       string
+	// Owners are user IDs allowed to run dangerous (approval-gated) tools. When
+	// empty, owner gating is disabled and any user may approve dangerous actions.
+	Owners  []string
+	Persona string
 }
 
 // Engine runs the Reasoning-and-Acting loop: it repeatedly asks the model what
@@ -37,6 +40,7 @@ type Engine struct {
 	maxIter     int
 	maxHistory  int
 	autoApprove map[string]struct{}
+	owners      map[string]struct{}
 	persona     string
 }
 
@@ -50,11 +54,22 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 	}
 	auto := make(map[string]struct{}, len(cfg.AutoApprove))
 	for _, name := range cfg.AutoApprove {
+		// Some tools (e.g. run_shell) are too powerful to auto-approve wholesale;
+		// their individual calls are still evaluated per-command.
+		if tools.NeverAutoApprove(name) {
+			continue
+		}
 		auto[name] = struct{}{}
 	}
 	persona := cfg.Persona
 	if persona == "" {
 		persona = defaultPersona
+	}
+	owners := make(map[string]struct{}, len(cfg.Owners))
+	for _, id := range cfg.Owners {
+		if id != "" {
+			owners[id] = struct{}{}
+		}
 	}
 	return &Engine{
 		client:      client,
@@ -64,6 +79,7 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 		maxIter:     cfg.MaxIterations,
 		maxHistory:  cfg.MaxHistory,
 		autoApprove: auto,
+		owners:      owners,
 		persona:     persona,
 	}
 }
@@ -71,6 +87,12 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 const defaultPersona = `You are a helpful, capable general assistant operating over a chat interface.
 Reason step by step and use the available tools to accomplish the user's request.
 When a tool can answer a question or perform an action, call it rather than guessing.
+Prefer the structured workspace tools for file work: use read_file (with start_line/end_line
+for large files), list_dir and search_files to inspect, and write_file or edit_file to change
+files. Do NOT use the shell for plain file operations like cat, ls, sed or awk. Reserve run_shell
+for things those tools cannot do: building, running, linting and testing code, and multi-step
+commands. After changing code, run it or its tests with run_shell (e.g. "go test ./...",
+"python main.py") and fix any failures before reporting success.
 You can extend your own capabilities by creating skills (see the list_skills/load_skill tools).
 Keep replies concise and written in the user's language.`
 
@@ -163,6 +185,11 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 
 		args := json.RawMessage(call.Function.Arguments)
 		if tool.Dangerous(args) {
+			if !e.ownerAllowed(sess) {
+				messages = append(messages, toolResult(call.ID,
+					"refused: this action requires elevated permission and the current user is not an authorized owner"))
+				continue
+			}
 			if _, auto := e.autoApprove[call.Function.Name]; !auto {
 				desc := describeCall(call)
 				sess.Pending = &PendingApproval{
@@ -180,6 +207,19 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 		messages = append(messages, toolResult(call.ID, result))
 	}
 	return false, "", messages
+}
+
+// ownerAllowed reports whether the session's user may run dangerous tools. When
+// no owners are configured the gate is disabled and everyone is allowed.
+func (e *Engine) ownerAllowed(sess *Session) bool {
+	if len(e.owners) == 0 {
+		return true
+	}
+	if sess == nil {
+		return false
+	}
+	_, ok := e.owners[sess.UserID]
+	return ok
 }
 
 // exec runs a tool with the session injected into the context.

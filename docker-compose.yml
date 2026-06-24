@@ -15,6 +15,24 @@ services:
       - ./data:/app/data
       # Mount your config (copy config.example.toml to config.toml first).
       - ./config.toml:/app/config.toml:ro
+    # --- Hardening: contain the agent's shell/script execution ---
+    # The image already runs as a non-root user. These options further limit the
+    # blast radius if the agent is tricked into running a hostile command.
+    # NOTE: the agent legitimately needs outbound network (GitHub Copilot API,
+    # WeChat, redis, pip/go fetches), so the network is intentionally NOT cut off.
+    security_opt:
+      # Prevent gaining new privileges via setuid binaries (e.g. sudo).
+      - no-new-privileges:true
+    cap_drop:
+      # Drop all Linux capabilities; this is a pure outbound client.
+      - ALL
+    # Cap forks (fork-bomb defense) and resource usage.
+    pids_limit: 512
+    mem_limit: 1g
+    cpus: 2.0
+    tmpfs:
+      # Writable scratch space that is wiped on restart.
+      - /tmp:size=256m,mode=1777
     restart: unless-stopped
 
   redis:
@@ -22,6 +40,11 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

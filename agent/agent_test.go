@@ -126,3 +126,23 @@ func TestTrimHistoryUnderCap(t *testing.T) {
 		t.Fatalf("expected 2 messages, got %d", len(out))
 	}
 }
+
+func TestOwnerGate(t *testing.T) {
+	// With owners configured, only listed users may run dangerous tools.
+	e := NewEngine(nil, nil, nil, nil, EngineConfig{Owners: []string{"alice", ""}})
+	if !e.ownerAllowed(&Session{UserID: "alice"}) {
+		t.Error("owner alice should be allowed")
+	}
+	if e.ownerAllowed(&Session{UserID: "mallory"}) {
+		t.Error("non-owner mallory should be denied")
+	}
+	if e.ownerAllowed(&Session{UserID: ""}) {
+		t.Error("empty user ID should never match an owner")
+	}
+
+	// With no owners, the gate is disabled and everyone is allowed.
+	open := NewEngine(nil, nil, nil, nil, EngineConfig{})
+	if !open.ownerAllowed(&Session{UserID: "anyone"}) {
+		t.Error("empty owners should allow everyone")
+	}
+}

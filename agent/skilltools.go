@@ -18,6 +18,8 @@ func SkillTools(reg *skill.Registry) []tools.Tool {
 		&listSkillsTool{reg: reg},
 		&loadSkillTool{reg: reg},
 		&unloadSkillTool{reg: reg},
+		&createSkillTool{reg: reg},
+		&deleteSkillTool{reg: reg},
 	}
 }
 
@@ -104,6 +106,68 @@ func (t *unloadSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	delete(sess.ActiveSkills, a.Name)
 	return fmt.Sprintf("Unloaded skill %q.", a.Name), nil
+}
+
+// createSkillTool persists a skill as a self-contained folder (SKILL.md plus an
+// optional Deno entry file) in the dedicated skills directory. It is the
+// supported way to author skills, so the files reliably land in the registry
+// rather than the workspace. Creating/updating a capability is approval-gated.
+type createSkillTool struct{ reg *skill.Registry }
+
+func (t *createSkillTool) Name() string { return "create_skill" }
+func (t *createSkillTool) Description() string {
+	return "Create or update a skill as a self-contained folder in the skills directory. Provide the full SKILL.md markdown and, for an executable (runtime: deno) skill, the entry filename (e.g. skill.js) and its source code. The registry picks it up immediately. This is the only supported way to author skills; do not use write_file for skill files. Builtin skills cannot be overwritten."
+}
+func (t *createSkillTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Skill name and folder name: lowercase letters, digits and hyphens."},"skill_md":{"type":"string","description":"Full SKILL.md contents, including the frontmatter block."},"entry_file":{"type":"string","description":"Optional Deno entry filename (skill.js, skill.ts or *.mjs). Required for executable skills."},"entry_code":{"type":"string","description":"Source code for entry_file. Required when entry_file is set."}},"required":["name","skill_md"]}`)
+}
+func (t *createSkillTool) Dangerous(json.RawMessage) bool { return true }
+func (t *createSkillTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+	var a struct {
+		Name      string `json:"name"`
+		SkillMD   string `json:"skill_md"`
+		EntryFile string `json:"entry_file"`
+		EntryCode string `json:"entry_code"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+	if err := t.reg.Create(a.Name, a.SkillMD, a.EntryFile, a.EntryCode); err != nil {
+		return "", err
+	}
+	files := "SKILL.md"
+	if a.EntryFile != "" {
+		files += ", " + a.EntryFile
+	}
+	return fmt.Sprintf("Saved skill %q (%s). It is now available.", a.Name, files), nil
+}
+
+// deleteSkillTool removes a user skill's folder entirely. Builtin skills are
+// protected. Deletion is destructive, so it is approval-gated.
+type deleteSkillTool struct{ reg *skill.Registry }
+
+func (t *deleteSkillTool) Name() string { return "delete_skill" }
+func (t *deleteSkillTool) Description() string {
+	return "Delete a user-created skill, removing its entire folder (SKILL.md and any entry file) from the skills directory. Builtin skills cannot be deleted."
+}
+func (t *deleteSkillTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"The skill name to delete."}},"required":["name"]}`)
+}
+func (t *deleteSkillTool) Dangerous(json.RawMessage) bool { return true }
+func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var a struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+	if err := t.reg.Remove(a.Name); err != nil {
+		return "", err
+	}
+	if sess, ok := sessionFromContext(ctx); ok {
+		delete(sess.ActiveSkills, a.Name)
+	}
+	return fmt.Sprintf("Deleted skill %q.", a.Name), nil
 }
 
 // loadedSkillInstructions returns the instructions of all skills currently

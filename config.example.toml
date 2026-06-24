@@ -18,6 +18,20 @@ model = ""            # optional; overrides copilot.model for the agent when set
 max_iterations = 12   # max reasoning/acting steps per turn
 max_history = 40      # max stored messages per session
 skills_dir = ""       # defaults to <data_dir>/agent/skills
-scripts_dir = ""      # defaults to <data_dir>/agent/scripts
 workspace_dir = ""    # defaults to <data_dir>/agent/workspace
 auto_approve = []     # tool names that skip the approval prompt, e.g. ["read_file"]
+owners = []           # user IDs allowed to run dangerous tools (e.g. run_shell); empty disables the gate
+shell_timeout_seconds = 120  # max wall-clock per run_shell command (builds/tests)
+
+# The http_get tool fetches URLs from trusted host code (NOT from inside the
+# sandbox). It is limited to these domains (host or any subdomain) and each call
+# requires approval. Empty list denies all network.
+network_allowlist = []       # e.g. ["api.github.com", "wttr.in"]
+
+# Sandboxed skills run custom skill code inside the Deno sandbox. By default a
+# skill gets read-only access to its own directory and the workspace and no
+# network; a skill may opt into workspace writes (write: true) or specific
+# network hosts (net: a.com, b.com) in its SKILL.md frontmatter, which then
+# require approval. All user-added executable skills must use runtime: deno.
+deno_path = ""              # path to the deno binary; empty => look up "deno" on PATH
+skill_timeout_seconds = 30  # max wall-clock per sandboxed run_skill execution
