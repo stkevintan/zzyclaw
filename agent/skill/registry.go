@@ -7,6 +7,7 @@ package skill
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -206,11 +207,11 @@ type netList []string
 func (n *netList) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
 	case yaml.SequenceNode:
-		out := make([]string, 0, len(value.Content))
+		// Reuse splitList per item so each entry is trimmed/lowercased and the
+		// "none"/"false" sentinels are filtered, matching the scalar form.
+		var out []string
 		for _, item := range value.Content {
-			if v := strings.TrimSpace(strings.ToLower(item.Value)); v != "" && v != "none" && v != "false" {
-				out = append(out, v)
-			}
+			out = append(out, splitList(item.Value)...)
 		}
 		*n = out
 	default:
@@ -236,7 +237,11 @@ func parse(content string) *Skill {
 	front, body := splitFrontmatter(content)
 	if front != "" {
 		var fm frontmatter
-		if err := yaml.Unmarshal([]byte(front), &fm); err == nil {
+		if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
+			// Surface malformed frontmatter rather than silently degrading to an
+			// instructions-only skill (e.g. a bad runtime/net line being dropped).
+			slog.Error("skill: parse frontmatter", "error", err)
+		} else {
 			s.Name = strings.TrimSpace(fm.Name)
 			s.Description = strings.TrimSpace(fm.Description)
 			s.Runtime = strings.ToLower(strings.TrimSpace(fm.Runtime))
