@@ -6,6 +6,18 @@ level = "info" # debug, info, warn, error
 [copilot]
 model = "gpt-4o"
 
-[openclaw]
-host = "wss://your-openclaw-host.example.com"
-token = "your-gateway-token"
+# Conversation memory. Leave addr empty to use in-memory storage (lost on restart).
+[redis]
+addr = ""          # e.g. "redis:6379" or "localhost:6379"
+password = ""
+db = 0
+ttl_seconds = 0    # 0 = never expire
+
+[agent]
+model = ""            # optional; overrides copilot.model for the agent when set
+max_iterations = 12   # max reasoning/acting steps per turn
+max_history = 40      # max stored messages per session
+skills_dir = ""       # defaults to <data_dir>/agent/skills
+scripts_dir = ""      # defaults to <data_dir>/agent/scripts
+workspace_dir = ""    # defaults to <data_dir>/agent/workspace
+auto_approve = []     # tool names that skip the approval prompt, e.g. ["read_file"]

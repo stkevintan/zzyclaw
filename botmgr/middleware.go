@@ -14,13 +14,16 @@ import (
 type BotMgrMiddleware struct {
 	middlewares.BotClient
 	manager *Manager
+	router  *middlewares.CommandRouter
 }
 
 func NewMiddleware(manager *Manager, bot *wechatbot.Bot) *BotMgrMiddleware {
-	return &BotMgrMiddleware{
+	m := &BotMgrMiddleware{
 		BotClient: middlewares.BotClient{Bot: bot},
 		manager:   manager,
 	}
+	m.router = m.buildRouter()
+	return m
 }
 
 var _ middlewares.Middleware = (*BotMgrMiddleware)(nil)
@@ -61,104 +64,106 @@ func (m *BotMgrMiddleware) HandleMessage(ctx context.Context, msg *wechatbot.Inc
 	if msg.Type != wechatbot.ContentText {
 		return false
 	}
-
-	text := strings.TrimSpace(msg.Text)
-	if !strings.HasPrefix(text, "/bot") {
-		return false
-	}
-
-	fields := strings.Fields(text)
-	if len(fields) < 2 {
-		m.Reply(ctx, msg, botUsage())
-		return true
-	}
-
-	switch fields[1] {
-	case "new":
-		if len(fields) != 3 {
-			m.Reply(ctx, msg, "用法: /bot new <name>")
-			return true
-		}
-		if _, err := m.manager.CreateBot(fields[2], false); err != nil {
-			m.Reply(ctx, msg, fmt.Sprintf("创建 bot 失败: %v", err))
-			return true
-		}
-		m.Reply(ctx, msg, fmt.Sprintf("bot %s 已创建", fields[2]))
-		return true
-	case "del":
-		if len(fields) != 3 {
-			m.Reply(ctx, msg, "用法: /bot del <name>")
-			return true
-		}
-		if err := m.manager.DeleteBot(fields[2]); err != nil {
-			m.Reply(ctx, msg, fmt.Sprintf("删除 bot 失败: %v", err))
-			return true
-		}
-		m.Reply(ctx, msg, fmt.Sprintf("bot %s 已删除", fields[2]))
-		return true
-	case "list":
-		infos := m.manager.ListBots()
-		lines := make([]string, 0, len(infos)+1)
-		lines = append(lines, "当前 bots:")
-		for _, info := range infos {
-			status := "not logged in"
-			if info.LoggedIn {
-				status = "logged in"
-			}
-			if info.LoginInProgress {
-				status += ", login in progress"
-			}
-			if info.Running {
-				status += ", running"
-			}
-			prefix := "-"
-			if info.IsMaster {
-				prefix = "*"
-			}
-			lines = append(lines, fmt.Sprintf("%s %s: %s", prefix, info.Name, status))
-		}
-		m.ReplyChunks(ctx, msg, strings.Join(lines, "\n"))
-		return true
-	case "login":
-		if len(fields) != 3 {
-			m.Reply(ctx, msg, "用法: /bot login <name>")
-			return true
-		}
-		if err := m.manager.LoginAndStartAsync(fields[2]); err != nil {
-			m.Reply(ctx, msg, fmt.Sprintf("bot 登录失败: %v", err))
-			return true
-		}
-		m.Reply(ctx, msg, fmt.Sprintf("bot %s 开始登录，请使用 /bot log %s 查看二维码和状态", fields[2], fields[2]))
-		return true
-	case "log":
-		if len(fields) != 3 {
-			m.Reply(ctx, msg, "用法: /bot log <name>")
-			return true
-		}
-		lines, err := m.manager.LastLogLines(fields[2], 50)
-		if err != nil {
-			m.Reply(ctx, msg, fmt.Sprintf("读取 bot 日志失败: %v", err))
-			return true
-		}
-		if len(lines) == 0 {
-			m.Reply(ctx, msg, fmt.Sprintf("bot %s 暂无日志", fields[2]))
-			return true
-		}
-		m.ReplyChunks(ctx, msg, strings.Join(lines, "\n"))
-		return true
-	default:
-		m.Reply(ctx, msg, botUsage())
-		return true
-	}
+	return m.router.Dispatch(ctx, msg, msg.Text, func(usage string) { m.Reply(ctx, msg, usage) })
 }
 
-func botUsage() string {
-	return strings.Join([]string{
-		"支持的命令:",
-		"/bot new <name>",
-		"/bot del <name>",
-		"/bot list",
-		"/bot login <name>",
-		"/bot log <name>",
-	}, "\n")
+// buildRouter wires the /bot command table. The hidden "/bot" catch-all is
+// listed last so unknown or bare /bot commands show usage instead of falling
+// through to other middlewares.
+func (m *BotMgrMiddleware) buildRouter() *middlewares.CommandRouter {
+	return middlewares.NewCommandRouter(
+		middlewares.Command{
+			Aliases: []string{"/bot new"},
+			ArgHint: "<name>",
+			MinArgs: 1,
+			Desc:    "新建 bot",
+			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, args []string) {
+				if _, err := m.manager.CreateBot(args[0], false); err != nil {
+					m.Reply(ctx, msg, fmt.Sprintf("创建 bot 失败: %v", err))
+					return
+				}
+				m.Reply(ctx, msg, fmt.Sprintf("bot %s 已创建", args[0]))
+			},
+		},
+		middlewares.Command{
+			Aliases: []string{"/bot del"},
+			ArgHint: "<name>",
+			MinArgs: 1,
+			Desc:    "删除 bot",
+			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, args []string) {
+				if err := m.manager.DeleteBot(args[0]); err != nil {
+					m.Reply(ctx, msg, fmt.Sprintf("删除 bot 失败: %v", err))
+					return
+				}
+				m.Reply(ctx, msg, fmt.Sprintf("bot %s 已删除", args[0]))
+			},
+		},
+		middlewares.Command{
+			Aliases: []string{"/bot list"},
+			Desc:    "列出所有 bot",
+			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, _ []string) {
+				infos := m.manager.ListBots()
+				lines := make([]string, 0, len(infos)+1)
+				lines = append(lines, "当前 bots:")
+				for _, info := range infos {
+					status := "not logged in"
+					if info.LoggedIn {
+						status = "logged in"
+					}
+					if info.LoginInProgress {
+						status += ", login in progress"
+					}
+					if info.Running {
+						status += ", running"
+					}
+					prefix := "-"
+					if info.IsMaster {
+						prefix = "*"
+					}
+					lines = append(lines, fmt.Sprintf("%s %s: %s", prefix, info.Name, status))
+				}
+				m.ReplyChunks(ctx, msg, strings.Join(lines, "\n"))
+			},
+		},
+		middlewares.Command{
+			Aliases: []string{"/bot login"},
+			ArgHint: "<name>",
+			MinArgs: 1,
+			Desc:    "登录并启动 bot",
+			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, args []string) {
+				if err := m.manager.LoginAndStartAsync(args[0]); err != nil {
+					m.Reply(ctx, msg, fmt.Sprintf("bot 登录失败: %v", err))
+					return
+				}
+				m.Reply(ctx, msg, fmt.Sprintf("bot %s 开始登录，请使用 /bot log %s 查看二维码和状态", args[0], args[0]))
+			},
+		},
+		middlewares.Command{
+			Aliases: []string{"/bot log"},
+			ArgHint: "<name>",
+			MinArgs: 1,
+			Desc:    "查看 bot 日志",
+			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, args []string) {
+				lines, err := m.manager.LastLogLines(args[0], 50)
+				if err != nil {
+					m.Reply(ctx, msg, fmt.Sprintf("读取 bot 日志失败: %v", err))
+					return
+				}
+				if len(lines) == 0 {
+					m.Reply(ctx, msg, fmt.Sprintf("bot %s 暂无日志", args[0]))
+					return
+				}
+				m.ReplyChunks(ctx, msg, strings.Join(lines, "\n"))
+			},
+		},
+		middlewares.Command{
+			// Catch-all: claims the whole /bot namespace so unknown or bare /bot
+			// commands show usage rather than reaching the agent.
+			Aliases: []string{"/bot"},
+			Hidden:  true,
+			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, _ []string) {
+				m.Reply(ctx, msg, m.router.Help("支持的命令:", ""))
+			},
+		},
+	)
 }
