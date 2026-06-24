@@ -42,19 +42,20 @@ func (t *runSkillTool) Schema() json.RawMessage {
 }
 
 // Dangerous returns true when the targeted skill requests elevated capabilities
-// (workspace write or network), so the engine prompts for approval first.
-// Read-only, no-network skills run without a prompt. The skill is resolved for
-// the active user so each user is gated only by their own skills' declarations.
+// (workspace write, network, or environment access), so the engine prompts for
+// approval first. Read-only skills with no network or env access run without a
+// prompt. The skill is resolved for the active user so each user is gated only
+// by their own skills' declarations.
 func (t *runSkillTool) Dangerous(ctx context.Context, args json.RawMessage) bool {
 	s, ok := t.resolveSkill(ctx, args)
 	return ok && skillElevated(s)
 }
 
 // GrantScope lets an elevated skill run be remembered with "always". The grant is
-// scoped to the skill name AND the exact write/network capabilities it declares,
-// so if the skill later widens that access (e.g. adds a host or turns on write)
-// the key changes and the user is prompted again — a remembered approval can
-// never silently cover newly-declared capabilities.
+// scoped to the skill name AND the exact write/network/env capabilities it
+// declares, so if the skill later widens that access (e.g. adds a host, an env
+// var, or turns on write) the key changes and the user is prompted again — a
+// remembered approval can never silently cover newly-declared capabilities.
 func (t *runSkillTool) GrantScope(ctx context.Context, args json.RawMessage) (key, label string, ok bool) {
 	s, ok := t.resolveSkill(ctx, args)
 	if !ok || !skillElevated(s) {
@@ -66,7 +67,9 @@ func (t *runSkillTool) GrantScope(ctx context.Context, args json.RawMessage) (ke
 	}
 	net := append([]string(nil), s.Net...)
 	sort.Strings(net)
-	key = fmt.Sprintf("run_skill:%s:w=%s;n=%s", s.Name, write, strings.Join(net, ","))
+	env := append([]string(nil), s.Env...)
+	sort.Strings(env)
+	key = fmt.Sprintf("run_skill:%s:w=%s;n=%s;e=%s", s.Name, write, strings.Join(net, ","), strings.Join(env, ","))
 	return key, fmt.Sprintf("running the skill %q with its current access", s.Name), true
 }
 
@@ -89,10 +92,10 @@ func (t *runSkillTool) resolveSkill(ctx context.Context, args json.RawMessage) (
 }
 
 // skillElevated reports whether a skill requests capabilities beyond the
-// read-only default (workspace write or network), which is what makes a run
-// dangerous and subject to approval.
+// read-only default (workspace write, network, or environment access), which is
+// what makes a run dangerous and subject to approval.
 func skillElevated(s *skill.Skill) bool {
-	return s.Write || len(s.Net) > 0
+	return s.Write || len(s.Net) > 0 || len(s.Env) > 0
 }
 
 func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -163,6 +166,7 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		}
 	}
 	perms.Net = s.Net
+	perms.Env = s.Env
 
 	return t.runner.Run(ctx, entryPath, a.Args, perms)
 }

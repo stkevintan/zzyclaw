@@ -86,6 +86,30 @@ func TestParseNetNoneIsEmpty(t *testing.T) {
 	}
 }
 
+func TestParseEnvPreservesCase(t *testing.T) {
+	doc := "---\nname: greet\ndescription: x\nruntime: deno\nenv: API_TOKEN, Home\n---\n# Greet\n"
+	s := parse(doc)
+	if len(s.Env) != 2 || s.Env[0] != "API_TOKEN" || s.Env[1] != "Home" {
+		t.Errorf("env = %v, want [API_TOKEN Home] (case preserved)", s.Env)
+	}
+}
+
+func TestParseEnvBlockSequence(t *testing.T) {
+	doc := "---\nname: greet\ndescription: x\nruntime: deno\nenv:\n  - API_TOKEN\n  - \"PATH\"\n---\n# Greet\n"
+	s := parse(doc)
+	if len(s.Env) != 2 || s.Env[0] != "API_TOKEN" || s.Env[1] != "PATH" {
+		t.Errorf("env = %v, want [API_TOKEN PATH]", s.Env)
+	}
+}
+
+func TestParseEnvNoneIsEmpty(t *testing.T) {
+	doc := "---\nname: greet\ndescription: x\nruntime: deno\nenv: none\n---\n# Greet\n"
+	s := parse(doc)
+	if len(s.Env) != 0 {
+		t.Errorf("env = %v, want empty for \"none\"", s.Env)
+	}
+}
+
 func TestCreateAndRemoveSkill(t *testing.T) {
 	dir := t.TempDir()
 	r, err := NewRegistry(dir)

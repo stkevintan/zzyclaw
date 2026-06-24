@@ -29,6 +29,13 @@ func TestRunSkillGating(t *testing.T) {
 	mustWrite(t, filepath.Join(netdir, "SKILL.md"), "---\nname: fetcher\ndescription: x\nruntime: deno\nnet: example.com\n---\n# Fetcher\n")
 	mustWrite(t, filepath.Join(netdir, "skill.js"), "console.log('net')\n")
 
+	// A deno skill that requests environment access. Like net/write, declaring
+	// env makes the run dangerous and the grant remembers the exact env names.
+	envdir := filepath.Join(dir, "reader")
+	mustMkdir(t, envdir)
+	mustWrite(t, filepath.Join(envdir, "SKILL.md"), "---\nname: reader\ndescription: x\nruntime: deno\nenv: API_TOKEN, HOME\n---\n# Reader\n")
+	mustWrite(t, filepath.Join(envdir, "skill.js"), "console.log('env')\n")
+
 	// An instructions-only skill (no runtime) — not runnable via run_skill.
 	ndir := filepath.Join(dir, "doc")
 	mustMkdir(t, ndir)
@@ -53,6 +60,9 @@ func TestRunSkillGating(t *testing.T) {
 	if !tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"fetcher"}`)) {
 		t.Error("network skill must be dangerous")
 	}
+	if !tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"reader"}`)) {
+		t.Error("env skill must be dangerous")
+	}
 
 	// The elevated skill is grantable ("always"), scoped to its declared access;
 	// the read-only skill is not grantable because it never prompts.
@@ -61,8 +71,13 @@ func TestRunSkillGating(t *testing.T) {
 		t.Fatal("run_skill must implement Grantable")
 	}
 	key, label, ok := g.GrantScope(context.Background(), json.RawMessage(`{"skill":"fetcher"}`))
-	if !ok || key != "run_skill:fetcher:w=0;n=example.com" {
-		t.Fatalf("GrantScope(fetcher) = (%q,%q,%v), want key run_skill:fetcher:w=0;n=example.com", key, label, ok)
+	if !ok || key != "run_skill:fetcher:w=0;n=example.com;e=" {
+		t.Fatalf("GrantScope(fetcher) = (%q,%q,%v), want key run_skill:fetcher:w=0;n=example.com;e=", key, label, ok)
+	}
+	// The env grant fingerprint includes the sorted env var names.
+	envKey, _, ok := g.GrantScope(context.Background(), json.RawMessage(`{"skill":"reader"}`))
+	if !ok || envKey != "run_skill:reader:w=0;n=;e=API_TOKEN,HOME" {
+		t.Fatalf("GrantScope(reader) = (%q,%v), want key run_skill:reader:w=0;n=;e=API_TOKEN,HOME", envKey, ok)
 	}
 	if _, _, ok := g.GrantScope(context.Background(), json.RawMessage(`{"skill":"greet"}`)); ok {
 		t.Error("read-only skill must not be grantable")

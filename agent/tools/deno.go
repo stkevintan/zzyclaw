@@ -60,6 +60,7 @@ type DenoPermissions struct {
 	Read  []string // absolute paths granted read access
 	Write []string // absolute paths granted write access
 	Net   []string // network hosts (host or host:port) the run may reach
+	Env   []string // environment variable names the run may read (Deno --allow-env)
 }
 
 // denoArgs builds the deno argv for an entry file with the given permissions.
@@ -90,6 +91,12 @@ func denoArgs(entryPath string, scriptArgs []string, perms DenoPermissions, maxO
 			argv = append(argv, "--allow-net="+strings.Join(perms.Net, ","))
 		}
 	}
+	if len(perms.Env) > 0 {
+		// Always scope env access to the declared names (never bare --allow-env):
+		// the host environment is otherwise hidden from skills, so an unscoped
+		// grant would be a needless secret-exposure risk.
+		argv = append(argv, "--allow-env="+strings.Join(perms.Env, ","))
+	}
 	argv = append(argv, entryPath)
 	argv = append(argv, scriptArgs...)
 	return argv
@@ -112,12 +119,18 @@ func (r *DenoRunner) Run(ctx context.Context, entryPath string, scriptArgs []str
 
 	cmd := exec.CommandContext(cctx, r.bin, denoArgs(entryPath, scriptArgs, perms, r.maxOldSpaceMB)...)
 	cmd.Dir = filepath.Dir(entryPath)
-	// Minimal, fixed environment. Deno reads no env from user code (no
-	// --allow-env), and we keep its cache off the mounted data paths.
+	// Minimal, fixed environment. The host environment is hidden from skills by
+	// default; only the variable names a skill explicitly declares (and that exist
+	// on the host) are passed through, paired with --allow-env for those names.
 	cmd.Env = []string{
 		"DENO_DIR=" + r.cacheDir,
 		"DENO_NO_UPDATE_CHECK=1",
 		"NO_COLOR=1",
+	}
+	for _, name := range perms.Env {
+		if v, ok := os.LookupEnv(name); ok {
+			cmd.Env = append(cmd.Env, name+"="+v)
+		}
 	}
 
 	// When log.level=debug, dump the exact command we hand to Deno so module
@@ -129,6 +142,7 @@ func (r *DenoRunner) Run(ctx context.Context, entryPath string, scriptArgs []str
 		"read", perms.Read,
 		"write", perms.Write,
 		"net", perms.Net,
+		"env", perms.Env,
 	)
 
 	var buf bytes.Buffer

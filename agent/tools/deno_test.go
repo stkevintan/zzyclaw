@@ -16,7 +16,7 @@ func TestDenoArgsDefaultDenyByDefault(t *testing.T) {
 		}
 	}
 	// No permission flags when nothing is granted.
-	for _, bad := range []string{"--allow-read", "--allow-write", "--allow-net"} {
+	for _, bad := range []string{"--allow-read", "--allow-write", "--allow-net", "--allow-env"} {
 		if strings.Contains(joined, bad) {
 			t.Errorf("argv %v unexpectedly granted %q", argv, bad)
 		}
@@ -32,6 +32,7 @@ func TestDenoArgsGrantsScopedPermissions(t *testing.T) {
 		Read:  []string{"/skills/x", "/work"},
 		Write: []string{"/work"},
 		Net:   []string{"example.com", "api.example.org"},
+		Env:   []string{"API_TOKEN", "HOME"},
 	}
 	argv := denoArgs("/skills/x/skill.ts", []string{"a", "b"}, perms, 0)
 	joined := strings.Join(argv, " ")
@@ -44,9 +45,26 @@ func TestDenoArgsGrantsScopedPermissions(t *testing.T) {
 	if !strings.Contains(joined, "--allow-net=example.com,api.example.org") {
 		t.Errorf("missing scoped net in %v", argv)
 	}
+	if !strings.Contains(joined, "--allow-env=API_TOKEN,HOME") {
+		t.Errorf("missing scoped env in %v", argv)
+	}
 	// Script args come after the entry file.
 	if argv[len(argv)-2] != "a" || argv[len(argv)-1] != "b" {
 		t.Errorf("script args not appended last: %v", argv)
+	}
+}
+
+func TestDenoArgsEnvAlwaysScoped(t *testing.T) {
+	// env access is always scoped to declared names; never a bare --allow-env.
+	argv := denoArgs("/skills/x/skill.js", nil, DenoPermissions{Env: []string{"API_TOKEN"}}, 0)
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--allow-env=API_TOKEN") {
+		t.Errorf("missing scoped env in %v", argv)
+	}
+	for _, a := range argv {
+		if a == "--allow-env" {
+			t.Errorf("env must never be granted unscoped (bare --allow-env): %v", argv)
+		}
 	}
 }
 

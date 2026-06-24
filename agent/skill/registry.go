@@ -29,6 +29,7 @@ type Skill struct {
 	Runtime string   // "deno" for executable skills; empty = instructions-only skill
 	Entry   string   // entry source file run by Deno (default "skill.js"; .ts also allowed)
 	Net     []string // network hosts the skill may reach (Deno --allow-net); empty = no network
+	Env     []string // environment variable names the skill may read (Deno --allow-env); empty = none
 	Write   bool     // when true, the skill may write to the workspace; default read-only
 
 	// Builtin marks system skills (e.g. write-skill). It is derived from a
@@ -197,6 +198,7 @@ type frontmatter struct {
 	Runtime     string    `yaml:"runtime"`
 	Entry       string    `yaml:"entry"`
 	Net         netList   `yaml:"net"`
+	Env         envList   `yaml:"env"`
 	Write       writeFlag `yaml:"write"`
 }
 
@@ -216,6 +218,25 @@ func (n *netList) UnmarshalYAML(value *yaml.Node) error {
 		*n = out
 	default:
 		*n = splitList(value.Value)
+	}
+	return nil
+}
+
+// envList accepts either a YAML sequence of variable names or a scalar string
+// (comma/space-separated). Unlike netList it preserves case, because environment
+// variable names are case-sensitive (e.g. PATH, HOME).
+type envList []string
+
+func (e *envList) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		var out []string
+		for _, item := range value.Content {
+			out = append(out, splitListCase(item.Value)...)
+		}
+		*e = out
+	default:
+		*e = splitListCase(value.Value)
 	}
 	return nil
 }
@@ -247,6 +268,7 @@ func parse(content string) *Skill {
 			s.Runtime = strings.ToLower(strings.TrimSpace(fm.Runtime))
 			s.Entry = strings.TrimSpace(fm.Entry)
 			s.Net = fm.Net
+			s.Env = fm.Env
 			s.Write = bool(fm.Write)
 		}
 	}
@@ -283,11 +305,22 @@ func splitFrontmatter(content string) (front, body string) {
 // lowercased list of tokens (used for the network host allowlist). The values
 // "none" and "false" yield an empty list.
 func splitList(val string) []string {
-	val = strings.TrimSpace(strings.ToLower(val))
-	if val == "" || val == "none" || val == "false" {
+	out := splitListCase(val)
+	for i, s := range out {
+		out[i] = strings.ToLower(s)
+	}
+	return out
+}
+
+// splitListCase is splitList without lowercasing, for case-sensitive values such
+// as environment variable names. The "none"/"false" sentinels (matched
+// case-insensitively) still yield an empty list.
+func splitListCase(val string) []string {
+	trimmed := strings.TrimSpace(val)
+	if lower := strings.ToLower(trimmed); lower == "" || lower == "none" || lower == "false" {
 		return nil
 	}
-	fields := strings.FieldsFunc(val, func(r rune) bool {
+	fields := strings.FieldsFunc(trimmed, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t'
 	})
 	out := make([]string, 0, len(fields))

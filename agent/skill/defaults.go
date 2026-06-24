@@ -85,6 +85,12 @@ Opt into more only when the skill truly needs it, using frontmatter:
   Omit for no network. Prefer scoping to exact hostnames; ` + "`net: \"*\"`" + ` grants
   access to every host and should be avoided unless truly unavoidable.
 
+- ` + "`env: API_TOKEN, HOME`" + ` — grant read access to ONLY the listed environment
+  variable names (case-sensitive). The sandbox otherwise hides the host
+  environment entirely; declared variables are passed through with their host
+  values. Accepts a comma/space-separated string or a YAML list. Omit for no
+  environment access. There is no wildcard — list each variable explicitly.
+
    ` + "```" + `
    ---
    name: <skill-name>
@@ -92,16 +98,18 @@ Opt into more only when the skill truly needs it, using frontmatter:
    runtime: deno
    entry: skill.js
    net: api.example.com
+   env: API_TOKEN
    write: true
    ---
    ` + "```" + `
 
 Skills run inside the Deno sandbox, which enforces these permissions. A skill
-that declares ` + "`write`" + ` or ` + "`net`" + ` can modify the workspace or reach the network
+that declares ` + "`write`" + `, ` + "`net`" + `, or ` + "`env`" + ` can modify the workspace, reach the
+network, or read the named environment variables
 within those limits, so running it asks the user for approval first (they may
 reply "always" to remember that skill). A read-only, no-network skill runs
-without prompting. Request the minimum: omit ` + "`write`/`net`" + ` unless the skill
-truly needs them.
+without prompting. Request the minimum: omit ` + "`write`/`net`/`env`" + ` unless the
+skill truly needs them.
 
 4. After ` + "`create_skill`" + ` succeeds, tell the user the skill was created and that it
    is now available (the registry reloads automatically).
