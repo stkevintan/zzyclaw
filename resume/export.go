@@ -21,13 +21,13 @@ var headers = []string{
 	"最高学历",
 	"手机号码",
 	"职称",
-	"工作年月",
-	"毕业院校（本科）",
-	"本科专业",
-	"毕业院校（硕士）",
-	"硕士专业",
+	"毕业院校（第一学历）",
+	"专业",
+	"毕业院校（最高学历）",
+	"专业",
 	"毕业时间",
 	"教师资格证书类型",
+	"工作\n年月",
 	"现工作单位",
 	"工作经验",
 	"主要荣誉",
@@ -53,7 +53,7 @@ func ExportXLSX(results []Result, fallbackSheet string) (_ []byte, err error) {
 
 	// --- styles ---
 	headerStyle, err := f.NewStyle(&excelize.Style{
-		Font:      &excelize.Font{Bold: true, Size: 11},
+		Font:      &excelize.Font{Bold: true, Size: 12, Family: "宋体"},
 		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
 		Border: []excelize.Border{
 			{Type: "left", Color: "000000", Style: 1},
@@ -64,6 +64,21 @@ func ExportXLSX(results []Result, fallbackSheet string) (_ []byte, err error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create header style: %w", err)
+	}
+
+	highlightHeaderStyle, err := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true, Size: 12, Family: "宋体"},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"FFFF00"}},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+		Border: []excelize.Border{
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create highlight header style: %w", err)
 	}
 
 	textStyle, err := f.NewStyle(&excelize.Style{
@@ -140,7 +155,7 @@ func ExportXLSX(results []Result, fallbackSheet string) (_ []byte, err error) {
 	// Populate each sheet
 	for _, name := range order {
 		g := groups[name]
-		if err := writeSheet(f, name, g.results, headerStyle, textStyle, cnyStyle); err != nil {
+		if err := writeSheet(f, name, g.results, headerStyle, highlightHeaderStyle, textStyle, cnyStyle); err != nil {
 			return nil, err
 		}
 	}
@@ -152,7 +167,7 @@ func ExportXLSX(results []Result, fallbackSheet string) (_ []byte, err error) {
 	return buf.Bytes(), nil
 }
 
-func writeSheet(f *excelize.File, sheet string, results []Result, headerStyle, textStyle, cnyStyle int) error {
+func writeSheet(f *excelize.File, sheet string, results []Result, headerStyle, highlightHeaderStyle, textStyle, cnyStyle int) error {
 	// --- headers ---
 	for i, h := range headers {
 		cell, err := excelize.CoordinatesToCellName(i+1, 1)
@@ -162,20 +177,21 @@ func writeSheet(f *excelize.File, sheet string, results []Result, headerStyle, t
 		if err := f.SetCellValue(sheet, cell, h); err != nil {
 			return fmt.Errorf("set header value %s: %w", cell, err)
 		}
-		if err := f.SetCellStyle(sheet, cell, cell, headerStyle); err != nil {
+		style := headerStyle
+		if i == 1 { // 联系结果 column gets yellow highlight
+			style = highlightHeaderStyle
+		}
+		if err := f.SetCellStyle(sheet, cell, cell, style); err != nil {
 			return fmt.Errorf("set header style %s: %w", cell, err)
 		}
 	}
-	if err := f.SetRowHeight(sheet, 1, 30); err != nil {
+	if err := f.SetRowHeight(sheet, 1, 57); err != nil {
 		return fmt.Errorf("set header row height: %w", err)
 	}
 
 	// --- column widths ---
 	colWidths := map[int]float64{
-		1: 6, 2: 10, 3: 8, 4: 10, 5: 6, 6: 22, 7: 6, 8: 6, 9: 14,
-		10: 10, 11: 10, 12: 14, 13: 10, 14: 10, 15: 18, 16: 18, 17: 18,
-		18: 18, 19: 12, 20: 16, 21: 20, 22: 20, 23: 20, 24: 16,
-		25: 16, 26: 14,
+		14: 12.25, 16: 13.25,
 	}
 	for col, w := range colWidths {
 		colName, err := excelize.ColumnNumberToName(col)
@@ -206,13 +222,13 @@ func writeSheet(f *excelize.File, sheet string, results []Result, headerStyle, t
 			string(e.HighestEducation),           // 最高学历
 			e.PhoneNumber,                        // 手机号码
 			string(e.ProfessionalTitle),          // 职称
-			e.WorkStartDate,                      // 工作年月
-			e.UndergraduateSchool,                // 毕业院校（本科）
-			e.UndergraduateMajor,                 // 本科专业
-			e.GraduateSchool,                     // 毕业院校（硕士）
-			e.GraduateMajor,                      // 硕士专业
+			e.UndergraduateSchool,                // 毕业院校（第一学历）
+			e.UndergraduateMajor,                 // 专业
+			e.GraduateSchool,                     // 毕业院校（最高学历）
+			e.GraduateMajor,                      // 专业
 			e.GraduationDate,                     // 毕业时间
 			string(e.TeachingCertificate),        // 教师资格证书类型
+			e.WorkStartDate,                      // 工作年月
 			e.CurrentEmployer,                    // 现工作单位
 			e.WorkExperience,                     // 工作经验
 			e.MainHonors,                         // 主要荣誉
