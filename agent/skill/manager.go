@@ -124,6 +124,26 @@ func (m *Manager) Get(userID, name string) (*Skill, bool) {
 	return nil, false
 }
 
+// Scope reports where Get would resolve name for userID: "builtin", "private"
+// (the user's own skill), "shared" (the on-disk shared registry) or "" when the
+// name is unknown. Because a private skill shadows a shared one, Scope returns
+// "private" when the user has their own copy even if a shared skill of the same
+// name also exists.
+func (m *Manager) Scope(userID, name string) string {
+	if builtinSkillSet[name] {
+		return "builtin"
+	}
+	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
+		if _, ok := ur.Get(name); ok {
+			return "private"
+		}
+	}
+	if _, ok := m.global.Get(name); ok {
+		return "shared"
+	}
+	return ""
+}
+
 // Create writes (or updates) a skill in userID's own directory. Builtin skills
 // cannot be overwritten. A user context is required.
 func (m *Manager) Create(userID, name, skillMD, entryFile, entryCode string) error {
@@ -165,14 +185,30 @@ func (m *Manager) RemoveShared(name string) error {
 }
 
 // Reload rescans skills from disk. With an empty userID it rescans the shared
-// builtins; otherwise it rescans only userID's own skills (the builtins are
-// static and seeded at startup, so reloading them per user would be redundant
-// disk I/O).
+// on-disk registry; otherwise it rescans only userID's own skills (the builtins
+// are compiled in, so reloading them would be pointless).
 func (m *Manager) Reload(userID string) error {
 	if userID == "" {
 		return m.global.Reload()
 	}
 	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
+		return ur.Reload()
+	}
+	return nil
+}
+
+// Refresh rescans both the shared on-disk registry and userID's own registry so
+// changes made directly on disk (e.g. files dropped into a skills directory)
+// are picked up. Builtins are compiled in and need no refresh.
+func (m *Manager) Refresh(userID string) error {
+	if err := m.global.Reload(); err != nil {
+		return err
+	}
+	ur, err := m.userRegistry(userID)
+	if err != nil {
+		return err
+	}
+	if ur != nil {
 		return ur.Reload()
 	}
 	return nil

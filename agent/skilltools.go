@@ -30,6 +30,7 @@ func SkillTools(mgr *skill.Manager, owners []string) []tools.Tool {
 		&listSkillsTool{mgr: mgr},
 		&loadSkillTool{mgr: mgr},
 		&unloadSkillTool{mgr: mgr},
+		&refreshSkillsTool{mgr: mgr},
 		&createSkillTool{mgr: mgr, owners: ownerSet},
 		&deleteSkillTool{mgr: mgr, owners: ownerSet},
 	}
@@ -58,7 +59,7 @@ type listSkillsTool struct{ mgr *skill.Manager }
 
 func (t *listSkillsTool) Name() string { return "list_skills" }
 func (t *listSkillsTool) Description() string {
-	return "List all available skills with their descriptions and whether they are currently loaded into this conversation."
+	return "List all available skills with their descriptions, their scope (builtin, shared or private) and whether they are currently loaded into this conversation."
 }
 func (t *listSkillsTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
@@ -74,13 +75,14 @@ func (t *listSkillsTool) Execute(ctx context.Context, _ json.RawMessage) (string
 	}
 	var b strings.Builder
 	for _, s := range skills {
+		scope := t.mgr.Scope(userID, s.Name)
 		loaded := ""
 		if sess != nil {
 			if _, ok := sess.ActiveSkills[s.Name]; ok {
 				loaded = " [loaded]"
 			}
 		}
-		fmt.Fprintf(&b, "- %s%s: %s\n", s.Name, loaded, s.Description)
+		fmt.Fprintf(&b, "- %s [%s]%s: %s\n", s.Name, scope, loaded, s.Description)
 	}
 	return strings.TrimSpace(b.String()), nil
 }
@@ -139,6 +141,29 @@ func (t *unloadSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	delete(sess.ActiveSkills, a.Name)
 	return fmt.Sprintf("Unloaded skill %q.", a.Name), nil
 }
+
+// refreshSkillsTool re-reads the on-disk skills directories (shared and the
+// caller's own) so changes made outside the skill tools — e.g. a SKILL.md
+// edited or a skill folder dropped in directly — are picked up. Builtins are
+// compiled in and always present.
+type refreshSkillsTool struct{ mgr *skill.Manager }
+
+func (t *refreshSkillsTool) Name() string { return "refresh_skills" }
+func (t *refreshSkillsTool) Description() string {
+	return "Re-scan the skills directories from disk and update the in-memory registry, picking up skills that were added, edited or removed outside the skill tools (e.g. files dropped into a skills directory). Use this when a skill should exist but does not appear in list_skills."
+}
+func (t *refreshSkillsTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{}}`)
+}
+func (t *refreshSkillsTool) Dangerous(context.Context, json.RawMessage) bool { return false }
+func (t *refreshSkillsTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	userID := userIDFromContext(ctx)
+	if err := t.mgr.Refresh(userID); err != nil {
+		return "", fmt.Errorf("refresh skills: %w", err)
+	}
+	return fmt.Sprintf("Refreshed skills from disk. %d skill(s) now available.", len(t.mgr.List(userID))), nil
+}
+
 
 // createSkillTool persists a skill as a self-contained folder (SKILL.md plus an
 // optional Deno entry file) in the calling user's own skills directory. It is
@@ -205,10 +230,10 @@ type deleteSkillTool struct {
 
 func (t *deleteSkillTool) Name() string { return "delete_skill" }
 func (t *deleteSkillTool) Description() string {
-	return "Delete one of your skills, removing its entire folder (SKILL.md and any entry file) from your skills directory. Builtin skills cannot be deleted. Set shared=true to delete a shared skill visible to all users (owners only)."
+	return "Delete a skill, removing its entire folder (SKILL.md and any entry file). By default it deletes your own private skill. To delete a shared skill (visible to all users) you MUST set shared=true, which is restricted to owners. Check the skill's scope with list_skills first: deleting a shared skill removes it for everyone. Builtin skills cannot be deleted."
 }
 func (t *deleteSkillTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"The skill name to delete."},"shared":{"type":"boolean","description":"When true, delete a shared skill from the registry visible to all users (owners only). Defaults to deleting your private skill."}},"required":["name"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"The skill name to delete."},"shared":{"type":"boolean","description":"Set true to delete a shared skill visible to all users (owners only). Leave false/unset to delete your own private skill. Must match the skill's scope shown by list_skills."}},"required":["name"]}`)
 }
 func (t *deleteSkillTool) Dangerous(context.Context, json.RawMessage) bool { return true }
 func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -223,6 +248,7 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
+	scope := t.mgr.Scope(sess.UserID, a.Name)
 	if a.Shared {
 		if !canManageShared(t.owners, sess.UserID) {
 			return "", fmt.Errorf("only owners may delete shared skills")
@@ -230,15 +256,23 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 		if err := t.mgr.RemoveShared(a.Name); err != nil {
 			return "", err
 		}
-	} else if err := t.mgr.Remove(sess.UserID, a.Name); err != nil {
-		return "", err
+	} else {
+		// Guard the common mistake of deleting a shared skill without shared=true:
+		// be explicit that it is shared (and owner-gated) rather than silently
+		// reporting "does not exist".
+		if scope == "shared" {
+			return "", fmt.Errorf("%q is a shared skill visible to all users, not your private skill; deleting it requires shared=true (owners only)", a.Name)
+		}
+		if err := t.mgr.Remove(sess.UserID, a.Name); err != nil {
+			return "", err
+		}
 	}
 	delete(sess.ActiveSkills, a.Name)
-	scope := "private"
+	kind := "private"
 	if a.Shared {
-		scope = "shared"
+		kind = "shared"
 	}
-	return fmt.Sprintf("Deleted %s skill %q.", scope, a.Name), nil
+	return fmt.Sprintf("Deleted %s skill %q.", kind, a.Name), nil
 }
 
 // loadedSkillInstructions returns the instructions of all skills currently
