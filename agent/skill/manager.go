@@ -146,6 +146,20 @@ func (m *Manager) Remove(userID, name string) error {
 	return ur.Remove(name)
 }
 
+// CreateShared writes (or updates) a skill in the shared on-disk registry, making
+// it visible to and runnable by every user. Builtin skills cannot be overwritten.
+// Authorization (e.g. owner-only) is enforced by the caller, since a shared skill
+// affects all users.
+func (m *Manager) CreateShared(name, skillMD, entryFile, entryCode string) error {
+	return m.global.Create(name, skillMD, entryFile, entryCode)
+}
+
+// RemoveShared deletes a skill from the shared on-disk registry. Builtin skills
+// are protected. Authorization is enforced by the caller.
+func (m *Manager) RemoveShared(name string) error {
+	return m.global.Remove(name)
+}
+
 // Reload rescans skills from disk. With an empty userID it rescans the shared
 // builtins; otherwise it rescans only userID's own skills (the builtins are
 // static and seeded at startup, so reloading them per user would be redundant

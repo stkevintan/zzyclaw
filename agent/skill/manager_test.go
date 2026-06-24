@@ -99,6 +99,43 @@ func TestManagerPerUserIsolation(t *testing.T) {
 	}
 }
 
+// TestSharedSkillVisibleToAllUsers verifies that a skill written to the shared
+// registry is resolvable and listed for every user, and can be removed again.
+func TestSharedSkillVisibleToAllUsers(t *testing.T) {
+	base := t.TempDir()
+	mgr, err := NewManager(filepath.Join(base, "global"), func(userID string) (string, error) {
+		return filepath.Join(base, "users", userID, "skills"), nil
+	})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+
+	if err := mgr.CreateShared("team", "---\nname: team\ndescription: shared\n---\n# Team\n", "", ""); err != nil {
+		t.Fatalf("create shared: %v", err)
+	}
+
+	for _, u := range []string{"alice", "bob", ""} {
+		if _, ok := mgr.Get(u, "team"); !ok {
+			t.Fatalf("user %q should resolve the shared skill", u)
+		}
+		if !hasSkill(mgr.List(u), "team") {
+			t.Fatalf("user %q list should include the shared skill", u)
+		}
+	}
+
+	// Builtins are still protected on the shared path.
+	if err := mgr.CreateShared("write-skill", "---\nname: write-skill\ndescription: x\n---\n# X\n", "", ""); err == nil {
+		t.Fatal("overwriting a builtin via the shared registry must be rejected")
+	}
+
+	if err := mgr.RemoveShared("team"); err != nil {
+		t.Fatalf("remove shared: %v", err)
+	}
+	if _, ok := mgr.Get("alice", "team"); ok {
+		t.Fatal("shared skill should be gone after removal")
+	}
+}
+
 func hasSkill(skills []*Skill, name string) bool {
 	for _, s := range skills {
 		if s.Name == name {

@@ -154,7 +154,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		slog.Info("deno skills inactive: deno not found (install Deno or set agent.deno_path)")
 	}
 
-	for _, t := range agent.SkillTools(skillMgr) {
+	for _, t := range agent.SkillTools(skillMgr, cfg.Agent.Owners) {
 		toolReg.Register(t)
 	}
 

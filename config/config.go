@@ -37,8 +37,8 @@ type AgentConfig struct {
 	Model         string   `mapstructure:"model"`          // overrides copilot.model for the agent when set
 	MaxIterations int      `mapstructure:"max_iterations"` // max ReAct steps per turn
 	MaxHistory    int      `mapstructure:"max_history"`    // max stored messages per session
-	SkillsDir     string   `mapstructure:"skills_dir"`     // defaults to <data_dir>/agent/skills
-	WorkspaceDir  string   `mapstructure:"workspace_dir"`  // defaults to <data_dir>/agent/workspace
+	SkillsDir     string   `mapstructure:"skills_dir"`     // optional shared dir for operator-provided skills (builtins are compiled in); defaults to <data_dir>/agent/skills
+	WorkspaceDir  string   `mapstructure:"workspace_dir"`  // base dir for per-user workspaces; defaults to <data_dir>/agent/workspace
 	AutoApprove   []string `mapstructure:"auto_approve"`   // tool names that skip the approval prompt
 	Owners        []string `mapstructure:"owners"`         // user IDs allowed to run dangerous tools; empty disables the gate
 
