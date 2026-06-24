@@ -19,15 +19,15 @@ import (
 // it does, running it is treated as dangerous and goes through the approval and
 // owner gate. Read-only, no-network skills run without a prompt.
 type runSkillTool struct {
-	reg       *skill.Registry
+	mgr       *skill.Manager
 	runner    *tools.DenoRunner
 	workspace string
 }
 
 // RunSkillTool builds the run_skill tool. runner executes the Deno sandbox;
 // workspace is the directory granted to skills (read-only by default).
-func RunSkillTool(reg *skill.Registry, runner *tools.DenoRunner, workspace string) tools.Tool {
-	return &runSkillTool{reg: reg, runner: runner, workspace: workspace}
+func RunSkillTool(mgr *skill.Manager, runner *tools.DenoRunner, workspace string) tools.Tool {
+	return &runSkillTool{mgr: mgr, runner: runner, workspace: workspace}
 }
 
 func (t *runSkillTool) Name() string { return "run_skill" }
@@ -40,15 +40,17 @@ func (t *runSkillTool) Schema() json.RawMessage {
 
 // Dangerous returns true when the targeted skill requests elevated capabilities
 // (workspace write or network), so the engine prompts for approval first.
-// Read-only, no-network skills run without a prompt.
-func (t *runSkillTool) Dangerous(args json.RawMessage) bool {
+// Read-only, no-network skills run without a prompt. The skill is resolved for
+// the active user so each user is gated only by their own skills' declarations.
+func (t *runSkillTool) Dangerous(ctx context.Context, args json.RawMessage) bool {
 	var a struct {
 		Skill string `json:"skill"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || a.Skill == "" {
 		return false
 	}
-	s, ok := t.reg.Get(a.Skill)
+	userID := userIDFromContext(ctx)
+	s, ok := t.mgr.Get(userID, a.Skill)
 	if !ok || s.Runtime != "deno" {
 		return false
 	}
@@ -66,8 +68,9 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if a.Skill == "" {
 		return "", fmt.Errorf("skill name must not be empty")
 	}
-	_ = t.reg.Reload()
-	s, ok := t.reg.Get(a.Skill)
+	userID := userIDFromContext(ctx)
+	_ = t.mgr.Reload(userID)
+	s, ok := t.mgr.Get(userID, a.Skill)
 	if !ok {
 		return "", fmt.Errorf("unknown skill %q", a.Skill)
 	}
@@ -108,10 +111,6 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		// Scope the skill's workspace access to the calling user's own
 		// subdirectory so one user's skill run cannot read or write another
 		// user's files.
-		userID := ""
-		if sess, ok := sessionFromContext(ctx); ok {
-			userID = sess.UserID
-		}
 		userWorkspace, err := tools.UserWorkspace(t.workspace, userID)
 		if err != nil {
 			return "", fmt.Errorf("user workspace: %w", err)

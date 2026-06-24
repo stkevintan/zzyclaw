@@ -43,7 +43,7 @@ func main() {
 	)
 
 	// Assemble the general agent: memory store, skills, tools and the engine.
-	engine, sessions, skillReg, err := buildAgent(ctx, cfg, githubToken)
+	engine, sessions, skillMgr, err := buildAgent(ctx, cfg, githubToken)
 	if err != nil {
 		slog.Error("failed to build agent", "error", err)
 		os.Exit(1)
@@ -57,7 +57,7 @@ func main() {
 			return []middlewares.Middleware{
 				&middlewares.LoggingMiddleware{},
 				resume.NewMiddleware(bot, copilotClient, locker),
-				agent.NewMiddleware(bot, engine, sessions, skillReg),
+				agent.NewMiddleware(bot, engine, sessions, skillMgr),
 			}
 		},
 	)
@@ -83,10 +83,11 @@ func main() {
 }
 
 // buildAgent constructs the agent's shared components: the conversation-memory
-// store, the disk-backed skill registry (seeded with the write-skill skill), the
-// built-in tools (sandboxed filesystem + script runner + skill management) and
-// the ReAct engine.
-func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*agent.Engine, *agent.SessionManager, *skill.Registry, error) {
+// store, the disk-backed skill manager (shared builtins seeded with the
+// write-skill skill plus per-user skill directories), the built-in tools
+// (sandboxed filesystem + script runner + skill management) and the ReAct
+// engine.
+func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*agent.Engine, *agent.SessionManager, *skill.Manager, error) {
 	agentBase := filepath.Join(cfg.DataDir, "agent")
 	skillsDir := orDefault(cfg.Agent.SkillsDir, filepath.Join(agentBase, "skills"))
 	workspaceDir := orDefault(cfg.Agent.WorkspaceDir, filepath.Join(agentBase, "workspace"))
@@ -111,12 +112,19 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		slog.Info("agent memory: in-memory")
 	}
 
-	skillReg, err := skill.NewRegistry(skillsDir)
+	// Skills: shared builtins live in skillsDir (seeded), while each user's own
+	// skills live under their private workspace subdirectory. The userDir closure
+	// keeps the skill package agnostic of the workspace layout and reuses the same
+	// per-user isolation as the filesystem sandbox.
+	skillMgr, err := skill.NewManager(skillsDir, func(userID string) (string, error) {
+		ws, err := tools.UserWorkspace(workspaceDir, userID)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(ws, "skills"), nil
+	})
 	if err != nil {
 		return nil, nil, nil, err
-	}
-	if err := skillReg.Seed(); err != nil {
-		slog.Warn("failed to seed default skills", "error", err)
 	}
 
 	sandbox, err := tools.NewSandbox(workspaceDir, skillsDir)
@@ -138,14 +146,14 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	// network; skills may opt into workspace writes or specific network hosts.
 	denoCacheDir := filepath.Join(agentBase, "deno-cache")
 	denoRunner := tools.NewDenoRunner(cfg.Agent.DenoPath, denoCacheDir, time.Duration(cfg.Agent.SkillTimeoutSeconds)*time.Second)
-	toolReg.Register(agent.RunSkillTool(skillReg, denoRunner, workspaceDir))
+	toolReg.Register(agent.RunSkillTool(skillMgr, denoRunner, workspaceDir))
 	if denoRunner.Installed() {
 		slog.Info("deno skills enabled", "deno", denoRunner.Path())
 	} else {
 		slog.Info("deno skills inactive: deno not found (install Deno or set agent.deno_path)")
 	}
 
-	for _, t := range agent.SkillTools(skillReg) {
+	for _, t := range agent.SkillTools(skillMgr) {
 		toolReg.Register(t)
 	}
 
@@ -159,7 +167,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	// (persistent with Redis, process-local otherwise).
 	grants := agent.NewStoreGrantStore(store)
 
-	engine := agent.NewEngine(agentClient, toolReg, skillReg, store, agent.EngineConfig{
+	engine := agent.NewEngine(agentClient, toolReg, skillMgr, store, agent.EngineConfig{
 		MaxIterations: cfg.Agent.MaxIterations,
 		MaxHistory:    cfg.Agent.MaxHistory,
 		AutoApprove:   cfg.Agent.AutoApprove,
@@ -167,7 +175,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		Grants:        grants,
 	})
 	sessions := agent.NewSessionManager(store)
-	return engine, sessions, skillReg, nil
+	return engine, sessions, skillMgr, nil
 }
 
 func orDefault(v, def string) string {

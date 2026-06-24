@@ -92,7 +92,7 @@ func (m *Middleware) buildRouter() *middlewares.CommandRouter {
 			Aliases: []string{"/skill reload"},
 			Desc:    "从磁盘重新扫描技能",
 			Run: func(ctx context.Context, msg *wechatbot.IncomingMessage, _ []string) {
-				if err := m.skills.Reload(); err != nil {
+				if err := m.skills.Reload(msg.UserID); err != nil {
 					m.Reply(ctx, msg, "重新加载技能失败："+err.Error())
 					return
 				}

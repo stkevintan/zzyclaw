@@ -51,7 +51,7 @@ const (
 type Engine struct {
 	client *copilot.Client
 	tools  *tools.Registry
-	skills *skill.Registry
+	skills *skill.Manager
 	store  Store
 
 	maxIter     int
@@ -63,7 +63,7 @@ type Engine struct {
 }
 
 // NewEngine constructs an engine from its dependencies and config.
-func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.Registry, store Store, cfg EngineConfig) *Engine {
+func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.Manager, store Store, cfg EngineConfig) *Engine {
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = 12
 	}
@@ -222,7 +222,7 @@ func (e *Engine) processBatch(ctx context.Context, sess *Session, messages []cop
 		}
 
 		args := json.RawMessage(call.Function.Arguments)
-		if tool.Dangerous(args) {
+		if tool.Dangerous(e.toolCtx(ctx, sess), args) {
 			if !e.ownerAllowed(sess) {
 				messages = append(messages, toolResult(call.ID,
 					"refused: this action requires elevated permission and the current user is not an authorized owner"))
@@ -291,10 +291,17 @@ func (e *Engine) ownerAllowed(sess *Session) bool {
 	return ok
 }
 
+// toolCtx returns a context carrying the active session and user so tools can
+// resolve per-user resources (e.g. skills, workspace) during both their
+// Dangerous check and execution.
+func (e *Engine) toolCtx(ctx context.Context, sess *Session) context.Context {
+	return tools.WithUser(withSession(ctx, sess), sess.UserID)
+}
+
 // exec runs a tool with the session injected into the context.
 func (e *Engine) exec(ctx context.Context, sess *Session, tool tools.Tool, call copilot.ToolCall) string {
 	slog.Debug("tool call", "tool", call.Function.Name, "args", call.Function.Arguments)
-	tctx := tools.WithUser(withSession(ctx, sess), sess.UserID)
+	tctx := e.toolCtx(ctx, sess)
 	out, err := tool.Execute(tctx, json.RawMessage(call.Function.Arguments))
 	if err != nil {
 		slog.Debug("tool result", "tool", call.Function.Name, "error", err.Error())
@@ -337,7 +344,11 @@ func (e *Engine) systemPrompt(sess *Session) string {
 	var b strings.Builder
 	b.WriteString(e.persona)
 
-	if skills := e.skills.List(); len(skills) > 0 {
+	userID := ""
+	if sess != nil {
+		userID = sess.UserID
+	}
+	if skills := e.skills.List(userID); len(skills) > 0 {
 		b.WriteString("\n\n# Available skills\nLoad a skill with load_skill when its description matches the task:\n")
 		for _, s := range skills {
 			fmt.Fprintf(&b, "- %s: %s\n", s.Name, s.Description)

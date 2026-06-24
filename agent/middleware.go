@@ -19,12 +19,12 @@ type Middleware struct {
 
 	engine   *Engine
 	sessions *SessionManager
-	skills   *skill.Registry
+	skills   *skill.Manager
 	router   *middlewares.CommandRouter
 }
 
 // NewMiddleware wires the agent middleware for a bot.
-func NewMiddleware(bot *wechatbot.Bot, engine *Engine, sessions *SessionManager, skills *skill.Registry) *Middleware {
+func NewMiddleware(bot *wechatbot.Bot, engine *Engine, sessions *SessionManager, skills *skill.Manager) *Middleware {
 	m := &Middleware{
 		BotClient: middlewares.BotClient{Bot: bot},
 		engine:    engine,
@@ -96,11 +96,11 @@ func (m *Middleware) respond(ctx context.Context, msg *wechatbot.IncomingMessage
 }
 
 func (m *Middleware) skillList(ctx context.Context, userID string) string {
-	_ = m.skills.Reload()
+	_ = m.skills.Reload(userID)
 	sess := m.sessions.Current(ctx, userID)
 	sess.Mu.Lock()
 	defer sess.Mu.Unlock()
-	skills := m.skills.List()
+	skills := m.skills.List(userID)
 	if len(skills) == 0 {
 		return "暂无可用技能。"
 	}
@@ -117,8 +117,8 @@ func (m *Middleware) skillList(ctx context.Context, userID string) string {
 }
 
 func (m *Middleware) skillLoad(ctx context.Context, msg *wechatbot.IncomingMessage, name string) {
-	_ = m.skills.Reload()
-	if _, ok := m.skills.Get(name); !ok {
+	_ = m.skills.Reload(msg.UserID)
+	if _, ok := m.skills.Get(msg.UserID, name); !ok {
 		m.Reply(ctx, msg, "未找到技能："+name)
 		return
 	}

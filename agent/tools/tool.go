@@ -20,8 +20,9 @@ type Tool interface {
 	// Schema returns the JSON schema describing the tool's parameters.
 	Schema() json.RawMessage
 	// Dangerous reports whether a given invocation requires human approval
-	// before it runs (e.g. writing or deleting files, executing scripts).
-	Dangerous(args json.RawMessage) bool
+	// before it runs (e.g. writing or deleting files, executing scripts). The
+	// context carries the active user, so per-user resources can be inspected.
+	Dangerous(ctx context.Context, args json.RawMessage) bool
 	// Execute runs the tool with the given JSON-encoded arguments and returns a
 	// human/model-readable result string.
 	Execute(ctx context.Context, args json.RawMessage) (string, error)

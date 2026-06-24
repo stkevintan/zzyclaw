@@ -79,10 +79,10 @@ func TestShellBlocksDangerousCommand(t *testing.T) {
 func TestShellReadOnlyNotDangerous(t *testing.T) {
 	sb, _ := NewSandbox(t.TempDir())
 	sh := NewShell(sb, 0)
-	if sh.Dangerous(json.RawMessage(`{"command":"ls -la"}`)) {
+	if sh.Dangerous(context.Background(), json.RawMessage(`{"command":"ls -la"}`)) {
 		t.Error("ls -la should not require approval")
 	}
-	if !sh.Dangerous(json.RawMessage(`{"command":"go test ./..."}`)) {
+	if !sh.Dangerous(context.Background(), json.RawMessage(`{"command":"go test ./..."}`)) {
 		t.Error("go test should require approval")
 	}
 }
