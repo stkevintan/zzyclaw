@@ -146,7 +146,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	// skill gets read-only access to its own directory and the workspace and no
 	// network; skills may opt into workspace writes or specific network hosts.
 	denoCacheDir := filepath.Join(agentBase, "deno-cache")
-	denoRunner := tools.NewDenoRunner(cfg.Agent.DenoPath, denoCacheDir, time.Duration(cfg.Agent.SkillTimeoutSeconds)*time.Second)
+	denoRunner := tools.NewDenoRunner(cfg.Agent.DenoPath, denoCacheDir, time.Duration(cfg.Agent.SkillTimeoutSeconds)*time.Second, cfg.Agent.SkillMemoryMB)
 	toolReg.Register(agent.RunSkillTool(skillMgr, denoRunner, workspaceDir))
 	if denoRunner.Installed() {
 		slog.Info("deno skills enabled", "deno", denoRunner.Path())

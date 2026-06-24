@@ -40,7 +40,7 @@ func TestRunSkillGating(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 
-	runner := tools.NewDenoRunner(filepath.Join(dir, "no-such-deno-binary"), filepath.Join(dir, "cache"), time.Second) // not installed
+	runner := tools.NewDenoRunner(filepath.Join(dir, "no-such-deno-binary"), filepath.Join(dir, "cache"), time.Second, 0) // not installed
 	tool := RunSkillTool(mgr, runner, "")
 
 	// Read-only, no-network skill: frictionless (not dangerous).
