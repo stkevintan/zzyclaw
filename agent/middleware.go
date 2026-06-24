@@ -160,6 +160,25 @@ func (m *Middleware) sessionNew(ctx context.Context, msg *wechatbot.IncomingMess
 	m.Reply(ctx, msg, fmt.Sprintf("已新建会话 #%s 并切换。", sess.ID))
 }
 
+// compactCurrent summarizes the current session's older history on demand,
+// keeping recent messages verbatim. It serializes against the session lock so a
+// concurrent turn never races on history.
+func (m *Middleware) compactCurrent(ctx context.Context, msg *wechatbot.IncomingMessage) {
+	sess := m.sessions.Current(ctx, msg.UserID)
+	sess.Mu.Lock()
+	defer sess.Mu.Unlock()
+	before, after, err := m.engine.CompactSession(ctx, sess)
+	if err != nil {
+		m.Reply(ctx, msg, "压缩会话失败："+err.Error())
+		return
+	}
+	if after >= before {
+		m.Reply(ctx, msg, "当前会话较短，暂无需压缩。")
+		return
+	}
+	m.Reply(ctx, msg, fmt.Sprintf("已压缩会话：%d 条消息合并为 %d 条。", before, after))
+}
+
 func (m *Middleware) sessionUse(ctx context.Context, msg *wechatbot.IncomingMessage, id string) {
 	sess, err := m.sessions.Select(ctx, msg.UserID, id)
 	if err != nil {

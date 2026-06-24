@@ -17,6 +17,8 @@ ttl_seconds = 0    # 0 = never expire
 model = ""            # optional; overrides copilot.model for the agent when set
 max_iterations = 12   # max reasoning/acting steps per turn
 max_history = 40      # max stored messages per session
+compact_threshold = 30 # summarize older messages once stored history exceeds this; 0 disables
+compact_keep = 12     # most-recent messages kept verbatim when compacting
 skills_dir = ""       # optional shared on-disk skills dir; defaults to <data_dir>/agent/skills (builtins are compiled in)
 workspace_dir = ""    # defaults to <data_dir>/agent/workspace
 auto_approve = []     # tool names that skip the approval prompt, e.g. ["read_file"]

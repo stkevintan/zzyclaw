@@ -88,6 +88,12 @@ Key safety mechanics:
   and any user may manage shared skills, mirroring the dangerous-tool owner gate.
 - **Bounded loops** — `max_iterations` caps reasoning steps per turn and
   `max_history` caps stored messages per session.
+- **Conversation compaction** — once a session's stored history exceeds
+  `compact_threshold` messages, the older turns are summarized into a compact
+  note kept at the head of the history while the most recent `compact_keep`
+  messages stay verbatim, so long conversations retain context without growing
+  unbounded. Users can also trigger it on demand with `/compact`
+  ([agent/compact.go](agent/compact.go)).
 
 ## 2. Skill management
 

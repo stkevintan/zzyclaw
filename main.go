@@ -169,11 +169,13 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	grants := agent.NewStoreGrantStore(store)
 
 	engine := agent.NewEngine(agentClient, toolReg, skillMgr, store, agent.EngineConfig{
-		MaxIterations: cfg.Agent.MaxIterations,
-		MaxHistory:    cfg.Agent.MaxHistory,
-		AutoApprove:   cfg.Agent.AutoApprove,
-		Owners:        cfg.Agent.Owners,
-		Grants:        grants,
+		MaxIterations:    cfg.Agent.MaxIterations,
+		MaxHistory:       cfg.Agent.MaxHistory,
+		CompactThreshold: cfg.Agent.CompactThreshold,
+		CompactKeep:      cfg.Agent.CompactKeep,
+		AutoApprove:      cfg.Agent.AutoApprove,
+		Owners:           cfg.Agent.Owners,
+		Grants:           grants,
 	})
 	sessions := agent.NewSessionManager(store)
 	return engine, sessions, skillMgr, nil
