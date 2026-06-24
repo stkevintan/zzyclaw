@@ -1,9 +1,6 @@
 package skill
 
-import (
-	"os"
-	"path/filepath"
-)
+import "sort"
 
 // writeSkillDoc is the built-in skill that teaches the agent how to author new
 // skills (and helper scripts) on disk in response to a user's request.
@@ -115,18 +112,46 @@ minimal.
 - Never overwrite or delete this write-skill skill.
 `
 
-// Seed writes the built-in write-skill into the registry directory if it is not
-// already present, then reloads.
-func (r *Registry) Seed() error {
-	dir := filepath.Join(r.dir, "write-skill")
-	path := filepath.Join(dir, "SKILL.md")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, []byte(writeSkillDoc), 0o644); err != nil {
-			return err
-		}
+// builtinDocs holds the compiled-in builtin skills' SKILL.md content, keyed by
+// name. Builtins ship inside the binary (imported via the Go module) and are
+// served from memory by the Manager — they are never written to or scanned from
+// disk.
+var builtinDocs = map[string]string{
+	"write-skill": writeSkillDoc,
+}
+
+// builtinSkillSet is the membership set derived from builtinDocs. Membership
+// (not frontmatter) is the single source of truth for Skill.Builtin and guards
+// builtin names against being overwritten or deleted on disk.
+var builtinSkillSet = func() map[string]bool {
+	m := make(map[string]bool, len(builtinDocs))
+	for name := range builtinDocs {
+		m[name] = true
 	}
-	return r.Reload()
+	return m
+}()
+
+// builtinSkills is the parsed, in-memory form of builtinDocs, built once at
+// startup from the compiled-in documents.
+var builtinSkills = func() map[string]*Skill {
+	m := make(map[string]*Skill, len(builtinDocs))
+	for name, doc := range builtinDocs {
+		s := parse(doc)
+		s.Name = name
+		s.Builtin = true
+		m[name] = s
+	}
+	return m
+}()
+
+// builtinList returns the compiled-in builtin skills sorted by name. Each entry
+// is a shallow copy so callers can never mutate the shared in-memory originals.
+func builtinList() []*Skill {
+	out := make([]*Skill, 0, len(builtinSkills))
+	for _, s := range builtinSkills {
+		sCopy := *s
+		out = append(out, &sCopy)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

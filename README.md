@@ -13,8 +13,8 @@ served through the GitHub Copilot API.
 ## Features
 
 - **ReAct agent** — multi-step reason → act → observe loop over a tool registry.
-- **Skill management** — self-contained, disk-backed skills the agent can list,
-  load, create, and delete at runtime without recompiling.
+- **Skill management** — self-contained, pluggable skills loaded at runtime:
+  builtin, owner-shared, and isolated per user.
 - **Deno-based sandbox** — user-authored skill code executes in Deno with
   deny-by-default permissions (no env, no subprocess, no FFI, no remote imports).
 - **Pluggable memory** — Redis-backed conversation memory, or in-memory when no
@@ -78,10 +78,14 @@ Key safety mechanics:
 - **Per-user skills** — every skill the agent authors at runtime lives in the
   calling user's own skills directory (`<workspace>/<user>/skills`). Users can
   only list, load, run, create or delete their own skills; one user can never
-  see or invoke another user's skill by name. The compiled-in **builtin** skills
-  (e.g. `write-skill`) live in the shared skills root, are visible to everyone,
-  and cannot be overwritten or deleted by a user
+  see or invoke another user's skill by name. The **builtin** skills (e.g.
+  `write-skill`) are compiled into the binary and served from memory, visible to
+  everyone and impossible for a user to overwrite or delete
   ([agent/skill/manager.go](agent/skill/manager.go)).
+- **Shared skills** — owners (`agent.owners`) can publish a skill to the shared
+  on-disk registry (`create_skill` with `shared: true`), making it visible to
+  and runnable by every user. When no owners are configured the gate is disabled
+  and any user may manage shared skills, mirroring the dangerous-tool owner gate.
 - **Bounded loops** — `max_iterations` caps reasoning steps per turn and
   `max_history` caps stored messages per session.
 
@@ -92,15 +96,17 @@ a `SKILL.md` file with YAML-ish frontmatter (name, description, and optional
 runtime/permission fields) followed by markdown instructions. Executable skills
 also ship their entry source file (e.g. `skill.js`) in the same folder, so a
 skill can be installed or deleted as a single unit
-([agent/skill/registry.go](agent/skill/registry.go)). Shared **builtin** skills
-live in the global skills root, while each user's own skills live in their
-private `<workspace>/<user>/skills` directory; a manager layers the two so users
-share builtins but never see each other's skills
-([agent/skill/manager.go](agent/skill/manager.go)).
+([agent/skill/registry.go](agent/skill/registry.go)). The **builtin** skills
+(e.g. `write-skill`) are compiled into the binary and served from memory, an
+optional shared on-disk registry holds skills published by owners, and each
+user's own skills live in their private `<workspace>/<user>/skills` directory; a
+manager layers the three so users share builtins (and any shared skills) but
+never see each other's private skills ([agent/skill/manager.go](agent/skill/manager.go)).
 
 ```
-<skills_dir>/            # shared builtins, visible to everyone
-  write-skill/
+(builtins compiled into the binary — e.g. write-skill — never on disk)
+<skills_dir>/                # optional shared skills, visible to all users
+  team-skill/
     SKILL.md
 <workspace>/<user>/skills/   # private to one user
   my-skill/
@@ -116,7 +122,10 @@ file tools — so files always land in the right place
 - `load_skill` / `unload_skill` — pull a skill's full instructions into (or out
   of) the current conversation.
 - `create_skill` — author a new skill folder (`SKILL.md` + optional entry file).
-- `delete_skill` — remove a skill folder.
+  Pass `shared: true` (owners only) to publish it to the shared registry for all
+  users instead of your private directory.
+- `delete_skill` — remove a skill folder. Pass `shared: true` (owners only) to
+  remove a shared skill.
 
 Frontmatter fields (parsed in [agent/skill/registry.go](agent/skill/registry.go)):
 

@@ -83,9 +83,9 @@ func main() {
 }
 
 // buildAgent constructs the agent's shared components: the conversation-memory
-// store, the disk-backed skill manager (shared builtins seeded with the
-// write-skill skill plus per-user skill directories), the built-in tools
-// (sandboxed filesystem + script runner + skill management) and the ReAct
+// store, the skill manager (compiled-in builtin skills plus per-user skill
+// directories, with an optional shared on-disk skills directory), the built-in
+// tools (sandboxed filesystem + script runner + skill management) and the ReAct
 // engine.
 func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*agent.Engine, *agent.SessionManager, *skill.Manager, error) {
 	agentBase := filepath.Join(cfg.DataDir, "agent")
@@ -112,10 +112,11 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		slog.Info("agent memory: in-memory")
 	}
 
-	// Skills: shared builtins live in skillsDir (seeded), while each user's own
-	// skills live under their private workspace subdirectory. The userDir closure
-	// keeps the skill package agnostic of the workspace layout and reuses the same
-	// per-user isolation as the filesystem sandbox.
+	// Skills: builtin skills are compiled into the binary (served from memory),
+	// while each user's own skills live under their private workspace subdirectory.
+	// skillsDir is an optional shared directory for operator-provided skills. The
+	// userDir closure keeps the skill package agnostic of the workspace layout and
+	// reuses the same per-user isolation as the filesystem sandbox.
 	skillMgr, err := skill.NewManager(skillsDir, func(userID string) (string, error) {
 		ws, err := tools.UserWorkspace(workspaceDir, userID)
 		if err != nil {
@@ -153,7 +154,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		slog.Info("deno skills inactive: deno not found (install Deno or set agent.deno_path)")
 	}
 
-	for _, t := range agent.SkillTools(skillMgr) {
+	for _, t := range agent.SkillTools(skillMgr, cfg.Agent.Owners) {
 		toolReg.Register(t)
 	}
 

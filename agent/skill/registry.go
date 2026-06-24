@@ -29,16 +29,10 @@ type Skill struct {
 	Net     []string // network hosts the skill may reach (Deno --allow-net); empty = no network
 	Write   bool     // when true, the skill may write to the workspace; default read-only
 
-	// Builtin marks system-seeded skills (e.g. write-skill). It is derived from a
+	// Builtin marks system skills (e.g. write-skill). It is derived from a
 	// compiled-in allowlist, never from frontmatter, so an untrusted skill cannot
 	// claim it. Only builtin skills are exempt from the deno-only rule for code.
 	Builtin bool
-}
-
-// builtinSkills is the compiled-in set of system skills. Membership (not
-// frontmatter) is the single source of truth for Skill.Builtin.
-var builtinSkills = map[string]bool{
-	"write-skill": true,
 }
 
 // Registry holds the skills discovered under a root directory.
@@ -85,7 +79,7 @@ func (r *Registry) Reload() error {
 			s.Name = e.Name()
 		}
 		s.Dir = filepath.Join(r.dir, e.Name())
-		s.Builtin = builtinSkills[s.Name]
+		s.Builtin = builtinSkillSet[s.Name]
 		loaded[s.Name] = s
 	}
 	r.mu.Lock()
@@ -144,7 +138,7 @@ func (r *Registry) Create(name, skillMD, entryFile, entryCode string) error {
 	if !ValidName(name) {
 		return fmt.Errorf("invalid skill name %q: use lowercase letters, digits and hyphens", name)
 	}
-	if builtinSkills[name] {
+	if builtinSkillSet[name] {
 		return fmt.Errorf("%q is a builtin skill and cannot be overwritten", name)
 	}
 	if strings.TrimSpace(skillMD) == "" {
@@ -179,7 +173,7 @@ func (r *Registry) Remove(name string) error {
 	if !ValidName(name) {
 		return fmt.Errorf("invalid skill name %q", name)
 	}
-	if builtinSkills[name] {
+	if builtinSkillSet[name] {
 		return fmt.Errorf("%q is a builtin skill and cannot be deleted", name)
 	}
 	dir := filepath.Join(r.dir, name)

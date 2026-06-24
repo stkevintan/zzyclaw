@@ -15,14 +15,35 @@ import (
 // context, which the engine injects before executing any tool, and scope every
 // operation to that user: each user sees only the shared builtin skills plus
 // their own.
-func SkillTools(mgr *skill.Manager) []tools.Tool {
+//
+// owners lists the user IDs allowed to create or delete shared skills (skills
+// visible to every user). It mirrors the engine's owner gate: when empty, the
+// gate is disabled and any user may manage shared skills.
+func SkillTools(mgr *skill.Manager, owners []string) []tools.Tool {
+	ownerSet := make(map[string]struct{}, len(owners))
+	for _, id := range owners {
+		if id != "" {
+			ownerSet[id] = struct{}{}
+		}
+	}
 	return []tools.Tool{
 		&listSkillsTool{mgr: mgr},
 		&loadSkillTool{mgr: mgr},
 		&unloadSkillTool{mgr: mgr},
-		&createSkillTool{mgr: mgr},
-		&deleteSkillTool{mgr: mgr},
+		&createSkillTool{mgr: mgr, owners: ownerSet},
+		&deleteSkillTool{mgr: mgr, owners: ownerSet},
 	}
+}
+
+// canManageShared reports whether userID may create or delete shared skills.
+// With no owners configured the gate is disabled and everyone is allowed,
+// matching the engine's dangerous-tool owner gate.
+func canManageShared(owners map[string]struct{}, userID string) bool {
+	if len(owners) == 0 {
+		return true
+	}
+	_, ok := owners[userID]
+	return ok
 }
 
 // userIDFromContext returns the active user's ID, or "" when no session is set.
@@ -123,14 +144,19 @@ func (t *unloadSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 // optional Deno entry file) in the calling user's own skills directory. It is
 // the supported way to author skills, so the files reliably land in the registry
 // rather than the workspace. Creating/updating a capability is approval-gated.
-type createSkillTool struct{ mgr *skill.Manager }
+// With shared=true the skill is written to the shared registry instead, visible
+// to every user; that is restricted to owners (see owners).
+type createSkillTool struct {
+	mgr    *skill.Manager
+	owners map[string]struct{}
+}
 
 func (t *createSkillTool) Name() string { return "create_skill" }
 func (t *createSkillTool) Description() string {
-	return "Create or update a skill as a self-contained folder in your skills directory. Provide the full SKILL.md markdown and, for an executable (runtime: deno) skill, the entry filename (e.g. skill.js) and its source code. The registry picks it up immediately. This is the only supported way to author skills; do not use write_file for skill files. Builtin skills cannot be overwritten."
+	return "Create or update a skill as a self-contained folder in your skills directory. Provide the full SKILL.md markdown and, for an executable (runtime: deno) skill, the entry filename (e.g. skill.js) and its source code. The registry picks it up immediately. This is the only supported way to author skills; do not use write_file for skill files. Builtin skills cannot be overwritten. Set shared=true to publish the skill to all users instead of your private directory (owners only)."
 }
 func (t *createSkillTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Skill name and folder name: lowercase letters, digits and hyphens."},"skill_md":{"type":"string","description":"Full SKILL.md contents, including the frontmatter block."},"entry_file":{"type":"string","description":"Optional Deno entry filename (skill.js, skill.ts or *.mjs). Required for executable skills."},"entry_code":{"type":"string","description":"Source code for entry_file. Required when entry_file is set."}},"required":["name","skill_md"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Skill name and folder name: lowercase letters, digits and hyphens."},"skill_md":{"type":"string","description":"Full SKILL.md contents, including the frontmatter block."},"entry_file":{"type":"string","description":"Optional Deno entry filename (skill.js, skill.ts or *.mjs). Required for executable skills."},"entry_code":{"type":"string","description":"Source code for entry_file. Required when entry_file is set."},"shared":{"type":"boolean","description":"When true, publish to the shared registry visible to all users (owners only). Defaults to a private, per-user skill."}},"required":["name","skill_md"]}`)
 }
 func (t *createSkillTool) Dangerous(context.Context, json.RawMessage) bool { return true }
 func (t *createSkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -139,6 +165,7 @@ func (t *createSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 		SkillMD   string `json:"skill_md"`
 		EntryFile string `json:"entry_file"`
 		EntryCode string `json:"entry_code"`
+		Shared    bool   `json:"shared"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -147,31 +174,47 @@ func (t *createSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
-	if err := t.mgr.Create(sess.UserID, a.Name, a.SkillMD, a.EntryFile, a.EntryCode); err != nil {
+	if a.Shared {
+		if !canManageShared(t.owners, sess.UserID) {
+			return "", fmt.Errorf("only owners may create shared skills")
+		}
+		if err := t.mgr.CreateShared(a.Name, a.SkillMD, a.EntryFile, a.EntryCode); err != nil {
+			return "", err
+		}
+	} else if err := t.mgr.Create(sess.UserID, a.Name, a.SkillMD, a.EntryFile, a.EntryCode); err != nil {
 		return "", err
+	}
+	scope := "private"
+	if a.Shared {
+		scope = "shared"
 	}
 	files := "SKILL.md"
 	if a.EntryFile != "" {
 		files += ", " + a.EntryFile
 	}
-	return fmt.Sprintf("Saved skill %q (%s). It is now available.", a.Name, files), nil
+	return fmt.Sprintf("Saved %s skill %q (%s). It is now available.", scope, a.Name, files), nil
 }
 
 // deleteSkillTool removes one of the user's own skill folders. Builtin skills
-// are protected. Deletion is destructive, so it is approval-gated.
-type deleteSkillTool struct{ mgr *skill.Manager }
+// are protected. Deletion is destructive, so it is approval-gated. With
+// shared=true it removes a shared skill instead (owners only).
+type deleteSkillTool struct {
+	mgr    *skill.Manager
+	owners map[string]struct{}
+}
 
 func (t *deleteSkillTool) Name() string { return "delete_skill" }
 func (t *deleteSkillTool) Description() string {
-	return "Delete one of your skills, removing its entire folder (SKILL.md and any entry file) from your skills directory. Builtin skills cannot be deleted."
+	return "Delete one of your skills, removing its entire folder (SKILL.md and any entry file) from your skills directory. Builtin skills cannot be deleted. Set shared=true to delete a shared skill visible to all users (owners only)."
 }
 func (t *deleteSkillTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"The skill name to delete."}},"required":["name"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"The skill name to delete."},"shared":{"type":"boolean","description":"When true, delete a shared skill from the registry visible to all users (owners only). Defaults to deleting your private skill."}},"required":["name"]}`)
 }
 func (t *deleteSkillTool) Dangerous(context.Context, json.RawMessage) bool { return true }
 func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		Shared bool   `json:"shared"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -180,11 +223,22 @@ func (t *deleteSkillTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok || sess == nil {
 		return "", fmt.Errorf("no active session")
 	}
-	if err := t.mgr.Remove(sess.UserID, a.Name); err != nil {
+	if a.Shared {
+		if !canManageShared(t.owners, sess.UserID) {
+			return "", fmt.Errorf("only owners may delete shared skills")
+		}
+		if err := t.mgr.RemoveShared(a.Name); err != nil {
+			return "", err
+		}
+	} else if err := t.mgr.Remove(sess.UserID, a.Name); err != nil {
 		return "", err
 	}
 	delete(sess.ActiveSkills, a.Name)
-	return fmt.Sprintf("Deleted skill %q.", a.Name), nil
+	scope := "private"
+	if a.Shared {
+		scope = "shared"
+	}
+	return fmt.Sprintf("Deleted %s skill %q.", scope, a.Name), nil
 }
 
 // loadedSkillInstructions returns the instructions of all skills currently
