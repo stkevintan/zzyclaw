@@ -1,0 +1,33 @@
+services:
+  app:
+    build: .
+    # The bot login is interactive (QR code), so keep STDIN/TTY attached.
+    stdin_open: true
+    tty: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # Point the agent's conversation memory at the redis service below.
+      ZZY_REDIS_ADDR: "redis:6379"
+    volumes:
+      # Persist credentials, skills, scripts and conversation data.
+      - ./data:/app/data
+      # Mount your config (copy config.example.toml to config.toml first).
+      - ./config.toml:/app/config.toml:ro
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:

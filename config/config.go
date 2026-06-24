@@ -8,10 +8,11 @@ import (
 )
 
 type Config struct {
-	DataDir  string         `mapstructure:"data_dir"`
-	Log      LogConfig      `mapstructure:"log"`
-	Copilot  CopilotConfig  `mapstructure:"copilot"`
-	OpenClaw OpenClawConfig `mapstructure:"openclaw"`
+	DataDir string        `mapstructure:"data_dir"`
+	Log     LogConfig     `mapstructure:"log"`
+	Copilot CopilotConfig `mapstructure:"copilot"`
+	Redis   RedisConfig   `mapstructure:"redis"`
+	Agent   AgentConfig   `mapstructure:"agent"`
 }
 
 type LogConfig struct {
@@ -22,9 +23,24 @@ type CopilotConfig struct {
 	Model string `mapstructure:"model"`
 }
 
-type OpenClawConfig struct {
-	Host  string `mapstructure:"host"`
-	Token string `mapstructure:"token"`
+// RedisConfig configures the optional Redis-backed conversation memory. When
+// Addr is empty, an in-memory store is used instead.
+type RedisConfig struct {
+	Addr       string `mapstructure:"addr"`
+	Password   string `mapstructure:"password"`
+	DB         int    `mapstructure:"db"`
+	TTLSeconds int    `mapstructure:"ttl_seconds"`
+}
+
+// AgentConfig configures the general ReAct agent.
+type AgentConfig struct {
+	Model         string   `mapstructure:"model"`          // overrides copilot.model for the agent when set
+	MaxIterations int      `mapstructure:"max_iterations"` // max ReAct steps per turn
+	MaxHistory    int      `mapstructure:"max_history"`    // max stored messages per session
+	SkillsDir     string   `mapstructure:"skills_dir"`     // defaults to <data_dir>/agent/skills
+	ScriptsDir    string   `mapstructure:"scripts_dir"`    // defaults to <data_dir>/agent/scripts
+	WorkspaceDir  string   `mapstructure:"workspace_dir"`  // defaults to <data_dir>/agent/workspace
+	AutoApprove   []string `mapstructure:"auto_approve"`   // tool names that skip the approval prompt
 }
 
 // SlogLevel converts the configured log level string to slog.Level.
@@ -50,8 +66,16 @@ func Load() (*Config, error) {
 	v.SetDefault("data_dir", "data")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("copilot.model", "gpt-4o")
-	v.SetDefault("openclaw.host", "")
-	v.SetDefault("openclaw.token", "")
+	v.SetDefault("redis.addr", "")
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.db", 0)
+	v.SetDefault("redis.ttl_seconds", 0)
+	v.SetDefault("agent.model", "")
+	v.SetDefault("agent.max_iterations", 12)
+	v.SetDefault("agent.max_history", 40)
+	v.SetDefault("agent.skills_dir", "")
+	v.SetDefault("agent.scripts_dir", "")
+	v.SetDefault("agent.workspace_dir", "")
 
 	// Config file
 	v.SetConfigName("config")

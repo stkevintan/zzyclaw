@@ -130,14 +130,45 @@ func (c *Client) resolveToken(ctx context.Context) (string, error) {
 
 // Message represents a chat message.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	Name       string     `json:"name,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// Tool describes a function the model may call.
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+// ToolFunction is the function definition portion of a Tool.
+type ToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// ToolCall is a function invocation requested by the model.
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+// ToolCallFunction holds the called function name and raw JSON arguments.
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type chatRequest struct {
 	Model          string          `json:"model"`
 	Messages       []Message       `json:"messages"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Tools          []Tool          `json:"tools,omitempty"`
+	ToolChoice     string          `json:"tool_choice,omitempty"`
 }
 
 type responseFormat struct {
@@ -183,6 +214,81 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 		Messages: messages,
 	}
 	return c.do(ctx, reqBody)
+}
+
+// ChatResult is the outcome of a ChatWithTools call: either textual content,
+// or one or more tool calls the model wants executed (or both).
+type ChatResult struct {
+	Content   string
+	ToolCalls []ToolCall
+}
+
+// ChatWithTools sends messages plus tool definitions to the chat completions
+// API and returns the assistant's reply, which may contain tool calls. It uses
+// the /chat/completions endpoint, which supports OpenAI-style function calling.
+func (c *Client) ChatWithTools(ctx context.Context, messages []Message, tools []Tool) (*ChatResult, error) {
+	token, err := c.resolveToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	reqBody := chatRequest{
+		Model:    c.model,
+		Messages: messages,
+		Tools:    tools,
+	}
+
+	msg, err := c.chatCompletionMessage(ctx, token, reqBody)
+	if err != nil {
+		return nil, err
+	}
+	return &ChatResult{Content: msg.Content, ToolCalls: msg.ToolCalls}, nil
+}
+
+// chatCompletionMessage posts to /chat/completions and returns the raw
+// assistant message, preserving any tool calls.
+func (c *Client) chatCompletionMessage(ctx context.Context, token string, reqBody chatRequest) (*Message, error) {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("copilot: marshal request: %w", err)
+	}
+
+	endpoint := c.baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("copilot: create request: %w", err)
+	}
+	c.setHeaders(req, token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("copilot: request: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Warn("failed to close chat response body", "error", closeErr)
+		}
+	}()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("copilot: read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("copilot: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var chatResp chatResponse
+	if err := json.Unmarshal(respBody, &chatResp); err != nil {
+		return nil, fmt.Errorf("copilot: unmarshal response: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("copilot: empty response")
+	}
+
+	return &chatResp.Choices[0].Message, nil
 }
 
 // Parse sends a system prompt and user content to the completions API with
