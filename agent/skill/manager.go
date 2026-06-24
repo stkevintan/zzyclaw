@@ -184,23 +184,11 @@ func (m *Manager) RemoveShared(name string) error {
 	return m.global.Remove(name)
 }
 
-// Reload rescans skills from disk. With an empty userID it rescans the shared
-// on-disk registry; otherwise it rescans only userID's own skills (the builtins
-// are compiled in, so reloading them would be pointless).
+// Reload rescans skills from disk so changes made directly on disk (e.g. a
+// SKILL.md edited or a skill folder dropped in) are picked up. It always
+// rescans the shared on-disk registry and, for a non-empty userID, that user's
+// own skills too. Builtins are compiled in and need no reload.
 func (m *Manager) Reload(userID string) error {
-	if userID == "" {
-		return m.global.Reload()
-	}
-	if ur, err := m.userRegistry(userID); err == nil && ur != nil {
-		return ur.Reload()
-	}
-	return nil
-}
-
-// Refresh rescans both the shared on-disk registry and userID's own registry so
-// changes made directly on disk (e.g. files dropped into a skills directory)
-// are picked up. Builtins are compiled in and need no refresh.
-func (m *Manager) Refresh(userID string) error {
 	if err := m.global.Reload(); err != nil {
 		return err
 	}

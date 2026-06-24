@@ -158,7 +158,7 @@ func (t *refreshSkillsTool) Schema() json.RawMessage {
 func (t *refreshSkillsTool) Dangerous(context.Context, json.RawMessage) bool { return false }
 func (t *refreshSkillsTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
 	userID := userIDFromContext(ctx)
-	if err := t.mgr.Refresh(userID); err != nil {
+	if err := t.mgr.Reload(userID); err != nil {
 		return "", fmt.Errorf("refresh skills: %w", err)
 	}
 	return fmt.Sprintf("Refreshed skills from disk. %d skill(s) now available.", len(t.mgr.List(userID))), nil

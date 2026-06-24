@@ -254,7 +254,7 @@ func TestRefreshPicksUpDiskChanges(t *testing.T) {
 		t.Fatal("disk-added private skill should not be visible before refresh")
 	}
 
-	if err := mgr.Refresh("alice"); err != nil {
+	if err := mgr.Reload("alice"); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
 	if _, ok := mgr.Get("alice", "ops"); !ok {
