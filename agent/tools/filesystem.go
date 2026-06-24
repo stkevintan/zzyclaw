@@ -33,22 +33,123 @@ func NewSandbox(roots ...string) (*Sandbox, error) {
 	return &Sandbox{roots: abs}, nil
 }
 
-// resolve validates and returns the absolute path for a user-supplied path.
-func (s *Sandbox) resolve(p string) (string, error) {
+// userCtxKey carries the active user ID so the sandbox can confine the workspace
+// to a per-user subdirectory.
+type userCtxKey struct{}
+
+// WithUser returns a context carrying userID. The filesystem, search and shell
+// tools use it to confine relative paths (and the shell working directory) to
+// the user's own workspace subdirectory, keeping each user's files separate.
+func WithUser(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userCtxKey{}, userID)
+}
+
+func userFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(userCtxKey{}).(string)
+	return id
+}
+
+// sanitizeUser maps a user ID to a single safe path segment, preventing path
+// traversal. WeChat user IDs are alphanumeric/underscore, so this is normally a
+// no-op; any other character collapses to '_'.
+func sanitizeUser(userID string) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, userID)
+	if safe == "" || safe == "." || safe == ".." {
+		return "_"
+	}
+	return safe
+}
+
+// userWorkspace returns the workspace base for userID: a per-user subdirectory
+// of the primary root. With an empty userID it returns the primary root itself
+// (used by the approval/grant checks and in non-user contexts such as tests).
+func (s *Sandbox) userWorkspace(userID string) string {
+	if userID == "" {
+		return s.roots[0]
+	}
+	return filepath.Join(s.roots[0], sanitizeUser(userID))
+}
+
+// UserWorkspace returns the per-user subdirectory under base (created if
+// necessary), mirroring the sandbox's per-user layout so skills and the
+// filesystem tools share the same directory for a given user. With an empty
+// base or userID it returns base unchanged.
+func UserWorkspace(base, userID string) (string, error) {
+	if base == "" || userID == "" {
+		return base, nil
+	}
+	dir := filepath.Join(base, sanitizeUser(userID))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// resolveFor validates p against the roots available to userID and returns its
+// absolute path. Relative paths are taken against the user's own workspace; the
+// user may reach their workspace subtree plus any shared root (e.g. the skills
+// directory) but never another user's workspace.
+func (s *Sandbox) resolveFor(userID, p string) (string, error) {
 	if p == "" {
 		return "", fmt.Errorf("path must not be empty")
 	}
+	base := s.userWorkspace(userID)
+	if userID != "" {
+		if err := os.MkdirAll(base, 0o755); err != nil {
+			return "", fmt.Errorf("create user workspace: %w", err)
+		}
+	}
 	abs := p
 	if !filepath.IsAbs(p) {
-		abs = filepath.Join(s.roots[0], p)
+		abs = filepath.Join(base, p)
 	}
 	abs = filepath.Clean(abs)
-	for _, root := range s.roots {
+	allowed := append([]string{base}, s.roots[1:]...)
+	for _, root := range allowed {
 		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
 			return abs, nil
 		}
 	}
 	return "", fmt.Errorf("path %q is outside the allowed workspace", p)
+}
+
+// resolve validates a path without a user scope: relative paths resolve against
+// the shared primary root and every root is reachable. It backs the
+// approval/grant checks, which run before the per-user scope is applied; the
+// actual reads and writes use resolveCtx so they land in the per-user workspace.
+func (s *Sandbox) resolve(p string) (string, error) {
+	return s.resolveFor("", p)
+}
+
+// resolveCtx resolves p within the workspace of the user carried by ctx.
+func (s *Sandbox) resolveCtx(ctx context.Context, p string) (string, error) {
+	return s.resolveFor(userFromContext(ctx), p)
+}
+
+// workspaceDir returns the (existing) per-user workspace directory for ctx.
+func (s *Sandbox) workspaceDir(ctx context.Context) (string, error) {
+	return s.resolveFor(userFromContext(ctx), ".")
+}
+
+// isProtectedRoot reports whether abs is a directory that must never be deleted:
+// any configured sandbox root or the caller's own workspace directory.
+func (s *Sandbox) isProtectedRoot(ctx context.Context, abs string) bool {
+	if uw, err := s.workspaceDir(ctx); err == nil && abs == uw {
+		return true
+	}
+	for _, root := range s.roots {
+		if abs == root {
+			return true
+		}
+	}
+	return false
 }
 
 // Roots returns the configured root directories (for prompt context).
@@ -121,7 +222,7 @@ func (t *readFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"start_line":{"type":"integer","description":"Optional 1-based first line to read. Omit to start at the top."},"end_line":{"type":"integer","description":"Optional 1-based last line to read (inclusive). Omit to read to the end."}},"required":["path"]}`)
 }
 func (t *readFileTool) Dangerous(json.RawMessage) bool { return false }
-func (t *readFileTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path      string `json:"path"`
 		StartLine int    `json:"start_line"`
@@ -130,7 +231,7 @@ func (t *readFileTool) Execute(_ context.Context, args json.RawMessage) (string,
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
-	abs, err := t.sb.resolve(a.Path)
+	abs, err := t.sb.resolveCtx(ctx, a.Path)
 	if err != nil {
 		return "", err
 	}
@@ -173,6 +274,7 @@ func (t *writeFileTool) Description() string {
 func (t *writeFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"content":{"type":"string","description":"Text content to write (or append)."},"append":{"type":"boolean","description":"If true, append to the file instead of overwriting it."}},"required":["path","content"]}`)
 }
+
 // Dangerous gates writes outside the workspace (e.g. the skills directory);
 // writes within the workspace root are pre-approved.
 func (t *writeFileTool) Dangerous(args json.RawMessage) bool {
@@ -189,7 +291,7 @@ func (t *writeFileTool) GrantScope(args json.RawMessage) (key, label string, ok 
 	}
 	return grantScopeForPath(t.sb, a.Path)
 }
-func (t *writeFileTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -198,7 +300,7 @@ func (t *writeFileTool) Execute(_ context.Context, args json.RawMessage) (string
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
-	abs, err := t.sb.resolve(a.Path)
+	abs, err := t.sb.resolveCtx(ctx, a.Path)
 	if err != nil {
 		return "", err
 	}
@@ -254,6 +356,7 @@ func (t *editFileTool) Description() string {
 func (t *editFileTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to the file, relative to the workspace root."},"old_string":{"type":"string","description":"Exact text to find. Include enough surrounding context to match a single location."},"new_string":{"type":"string","description":"Replacement text."},"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring exactly one match."}},"required":["path","old_string","new_string"]}`)
 }
+
 // Dangerous gates edits outside the workspace (e.g. the skills directory);
 // edits within the workspace root are pre-approved.
 func (t *editFileTool) Dangerous(args json.RawMessage) bool {
@@ -270,7 +373,7 @@ func (t *editFileTool) GrantScope(args json.RawMessage) (key, label string, ok b
 	}
 	return grantScopeForPath(t.sb, a.Path)
 }
-func (t *editFileTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (t *editFileTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path       string `json:"path"`
 		OldString  string `json:"old_string"`
@@ -286,7 +389,7 @@ func (t *editFileTool) Execute(_ context.Context, args json.RawMessage) (string,
 	if a.OldString == a.NewString {
 		return "", fmt.Errorf("old_string and new_string are identical")
 	}
-	abs, err := t.sb.resolve(a.Path)
+	abs, err := t.sb.resolveCtx(ctx, a.Path)
 	if err != nil {
 		return "", err
 	}
@@ -339,7 +442,7 @@ func (t *listDirTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Directory path relative to the workspace root. Use \".\" for the root."}},"required":["path"]}`)
 }
 func (t *listDirTool) Dangerous(json.RawMessage) bool { return false }
-func (t *listDirTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path string `json:"path"`
 	}
@@ -349,7 +452,7 @@ func (t *listDirTool) Execute(_ context.Context, args json.RawMessage) (string, 
 	if a.Path == "" {
 		a.Path = "."
 	}
-	abs, err := t.sb.resolve(a.Path)
+	abs, err := t.sb.resolveCtx(ctx, a.Path)
 	if err != nil {
 		return "", err
 	}
@@ -386,6 +489,7 @@ func (t *deletePathTool) Description() string {
 func (t *deletePathTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Path to delete, relative to the workspace root."}},"required":["path"]}`)
 }
+
 // Dangerous gates deletions outside the workspace (e.g. the skills directory);
 // deletions within the workspace root are pre-approved.
 func (t *deletePathTool) Dangerous(args json.RawMessage) bool {
@@ -402,21 +506,19 @@ func (t *deletePathTool) GrantScope(args json.RawMessage) (key, label string, ok
 	}
 	return grantScopeForPath(t.sb, a.Path)
 }
-func (t *deletePathTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (t *deletePathTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
-	abs, err := t.sb.resolve(a.Path)
+	abs, err := t.sb.resolveCtx(ctx, a.Path)
 	if err != nil {
 		return "", err
 	}
-	for _, root := range t.sb.roots {
-		if abs == root {
-			return "", fmt.Errorf("refusing to delete the workspace root")
-		}
+	if t.sb.isProtectedRoot(ctx, abs) {
+		return "", fmt.Errorf("refusing to delete the workspace root")
 	}
 	if err := os.RemoveAll(abs); err != nil {
 		return "", fmt.Errorf("delete: %w", err)

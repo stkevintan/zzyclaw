@@ -59,7 +59,7 @@ func (t *searchFilesTool) Execute(ctx context.Context, args json.RawMessage) (st
 		a.MaxResults = 100
 	}
 
-	abs, err := t.sb.resolve(a.Path)
+	abs, err := t.sb.resolveCtx(ctx, a.Path)
 	if err != nil {
 		return "", err
 	}

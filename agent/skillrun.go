@@ -105,7 +105,18 @@ func (t *runSkillTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}
 	perms := tools.DenoPermissions{Read: []string{absDir}}
 	if t.workspace != "" {
-		absWorkspace, err := filepath.Abs(t.workspace)
+		// Scope the skill's workspace access to the calling user's own
+		// subdirectory so one user's skill run cannot read or write another
+		// user's files.
+		userID := ""
+		if sess, ok := sessionFromContext(ctx); ok {
+			userID = sess.UserID
+		}
+		userWorkspace, err := tools.UserWorkspace(t.workspace, userID)
+		if err != nil {
+			return "", fmt.Errorf("user workspace: %w", err)
+		}
+		absWorkspace, err := filepath.Abs(userWorkspace)
 		if err != nil {
 			return "", fmt.Errorf("absolute workspace dir: %w", err)
 		}

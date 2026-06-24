@@ -71,6 +71,11 @@ Key safety mechanics:
   agent **workspace root** are pre-approved and never prompt; the gate (and the
   remembered-approval flow above) only applies to mutations outside it, such as
   the skills directory.
+- **Per-user workspaces** — each user gets a private subdirectory of the
+  workspace root. Relative paths, the `run_shell` working directory and a
+  skill's workspace access are all confined to the calling user's own directory,
+  so one user can never read or write another user's files (the skills directory
+  remains shared, read-only by default).
 - **Bounded loops** — `max_iterations` caps reasoning steps per turn and
   `max_history` caps stored messages per session.
 

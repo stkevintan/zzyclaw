@@ -294,7 +294,8 @@ func (e *Engine) ownerAllowed(sess *Session) bool {
 // exec runs a tool with the session injected into the context.
 func (e *Engine) exec(ctx context.Context, sess *Session, tool tools.Tool, call copilot.ToolCall) string {
 	slog.Debug("tool call", "tool", call.Function.Name, "args", call.Function.Arguments)
-	out, err := tool.Execute(withSession(ctx, sess), json.RawMessage(call.Function.Arguments))
+	tctx := tools.WithUser(withSession(ctx, sess), sess.UserID)
+	out, err := tool.Execute(tctx, json.RawMessage(call.Function.Arguments))
 	if err != nil {
 		slog.Debug("tool result", "tool", call.Function.Name, "error", err.Error())
 		return "Error: " + err.Error()
