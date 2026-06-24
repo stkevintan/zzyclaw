@@ -87,6 +87,11 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 	if cfg.CompactKeep <= 0 {
 		cfg.CompactKeep = 12
 	}
+	// Auto-compaction can only shrink history when the trigger sits above the
+	// verbatim window; otherwise splitForCompaction never finds anything to fold.
+	if cfg.CompactThreshold > 0 && cfg.CompactThreshold <= cfg.CompactKeep {
+		cfg.CompactThreshold = cfg.CompactKeep + 1
+	}
 	auto := make(map[string]struct{}, len(cfg.AutoApprove))
 	for _, name := range cfg.AutoApprove {
 		// Some tools (e.g. run_shell) are too powerful to auto-approve wholesale;

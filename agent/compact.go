@@ -54,6 +54,11 @@ func (e *Engine) compact(ctx context.Context, messages []copilot.Message) ([]cop
 	out := make([]copilot.Message, 0, len(recent)+1)
 	out = append(out, copilot.Message{Role: roleSystem, Content: conversationSummaryPrefix + summary})
 	out = append(out, recent...)
+	// Bail out if the summary didn't actually shorten the history: compacting
+	// would only spend tokens and lose precise messages for no gain.
+	if len(out) >= len(messages) {
+		return messages, false
+	}
 	slog.Debug("conversation compacted", "before", len(messages), "after", len(out))
 	return out, true
 }
