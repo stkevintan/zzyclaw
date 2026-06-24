@@ -166,8 +166,10 @@ Each run is launched with hardened flags:
 
 Default grant for a skill: **read-only** access to its own directory and the
 workspace, and **no network**. A skill opts into more by declaring `write: true`
-or `net: host-a, host-b` in its frontmatter — and those elevated runs then
-require approval. All user-added executable skills must use `runtime: deno`.
+or `net: host-a, host-b` in its frontmatter. Running a skill does not require
+approval: the Deno sandbox is the trust boundary and enforces exactly the
+declared read/write/net limits, so `run_skill` is not treated as a dangerous
+tool. All user-added executable skills must use `runtime: deno`.
 
 Deno's internal cache (`DENO_DIR`) is pointed at a separate cache directory so it
 never touches the skill or workspace directories. If the Deno binary is not

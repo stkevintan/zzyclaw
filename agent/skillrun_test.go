@@ -21,7 +21,9 @@ func TestRunSkillGating(t *testing.T) {
 	mustWrite(t, filepath.Join(wdir, "SKILL.md"), "---\nname: greet\ndescription: x\nruntime: deno\nentry: skill.js\n---\n# Greet\n")
 	mustWrite(t, filepath.Join(wdir, "skill.js"), "console.log('hi')\n")
 
-	// A deno skill that requests network — running it is dangerous (needs approval).
+	// A deno skill that requests network. It still runs without approval: the
+	// Deno sandbox enforces the declared net allowlist, so run_skill is not
+	// dangerous.
 	netdir := filepath.Join(dir, "fetcher")
 	mustMkdir(t, netdir)
 	mustWrite(t, filepath.Join(netdir, "SKILL.md"), "---\nname: fetcher\ndescription: x\nruntime: deno\nnet: example.com\n---\n# Fetcher\n")
@@ -43,13 +45,13 @@ func TestRunSkillGating(t *testing.T) {
 	runner := tools.NewDenoRunner(filepath.Join(dir, "no-such-deno-binary"), filepath.Join(dir, "cache"), time.Second) // not installed
 	tool := RunSkillTool(mgr, runner, "")
 
-	// Read-only, no-network skill: frictionless (not dangerous).
+	// Running a sandboxed skill never requires approval: the Deno sandbox is the
+	// trust boundary, so neither a read-only nor a network skill is dangerous.
 	if tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"greet"}`)) {
-		t.Error("read-only no-network skill must not be dangerous")
+		t.Error("read-only skill must not be dangerous")
 	}
-	// Network skill: requires approval.
-	if !tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"fetcher"}`)) {
-		t.Error("network skill must be dangerous (needs approval)")
+	if tool.Dangerous(context.Background(), json.RawMessage(`{"skill":"fetcher"}`)) {
+		t.Error("sandboxed network skill must not be dangerous; Deno enforces the net allowlist")
 	}
 
 	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"skill":"nope"}`)); err == nil {
