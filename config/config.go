@@ -71,9 +71,17 @@ func (c *LogConfig) SlogLevel() slog.Level {
 	}
 }
 
-// Load reads configuration from file and environment variables.
-// It looks for config.toml in the current directory.
+// Load reads configuration from file and environment variables. It looks for
+// config.toml in the current directory, then the filesystem root (for container
+// deployments). Environment variables (ZZY_*) always override file values.
 func Load() (*Config, error) {
+	return loadFrom(".", "/")
+}
+
+// loadFrom is the testable core of Load: it searches the given directories for
+// config.toml instead of relying on the process working directory, so tests can
+// supply an isolated temp dir without the process-wide side effects of os.Chdir.
+func loadFrom(configPaths ...string) (*Config, error) {
 	v := viper.New()
 
 	// Defaults
@@ -91,6 +99,17 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.compact_keep", 12)
 	v.SetDefault("agent.skills_dir", "")
 	v.SetDefault("agent.workspace_dir", "")
+	// Registering every agent key (even at its zero value) is what lets viper's
+	// AutomaticEnv bind the matching ZZY_AGENT_* variable: AutomaticEnv only
+	// resolves env vars for keys viper already knows about. The slice keys bind
+	// as comma-separated lists via viper's default StringToSlice decode hook
+	// (e.g. ZZY_AGENT_OWNERS="alice,bob").
+	v.SetDefault("agent.auto_approve", []string{})
+	v.SetDefault("agent.owners", []string{})
+	v.SetDefault("agent.network_allowlist", []string{})
+	v.SetDefault("agent.memory_enabled", false)
+	v.SetDefault("agent.memory_inject", 0)
+	v.SetDefault("agent.embedding_model", "")
 	v.SetDefault("agent.shell_timeout_seconds", 120)
 	v.SetDefault("agent.deno_path", "")
 	v.SetDefault("agent.skill_timeout_seconds", 30)
@@ -98,8 +117,9 @@ func Load() (*Config, error) {
 	// Config file
 	v.SetConfigName("config")
 	v.SetConfigType("toml")
-	v.AddConfigPath(".")
-	v.AddConfigPath("/")
+	for _, p := range configPaths {
+		v.AddConfigPath(p)
+	}
 
 	// Environment variables: ZZY_LOG_LEVEL, ZZY_COPILOT_TOKEN, etc.
 	v.SetEnvPrefix("ZZY")
