@@ -91,10 +91,14 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.compact_keep", 12)
 	v.SetDefault("agent.skills_dir", "")
 	v.SetDefault("agent.workspace_dir", "")
-	// Registering these (even at their zero values) is required for viper's
-	// AutomaticEnv to bind ZZY_AGENT_MEMORY_ENABLED / _MEMORY_INJECT /
-	// _EMBEDDING_MODEL: AutomaticEnv only resolves env vars for keys viper
-	// already knows about.
+	// Registering every agent key (even at its zero value) is what lets viper's
+	// AutomaticEnv bind the matching ZZY_AGENT_* variable: AutomaticEnv only
+	// resolves env vars for keys viper already knows about. The slice keys bind
+	// as comma-separated lists via viper's default StringToSlice decode hook
+	// (e.g. ZZY_AGENT_OWNERS="alice,bob").
+	v.SetDefault("agent.auto_approve", []string{})
+	v.SetDefault("agent.owners", []string{})
+	v.SetDefault("agent.network_allowlist", []string{})
 	v.SetDefault("agent.memory_enabled", false)
 	v.SetDefault("agent.memory_inject", 0)
 	v.SetDefault("agent.embedding_model", "")
