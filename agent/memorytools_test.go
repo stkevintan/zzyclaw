@@ -20,7 +20,7 @@ func memToolByName(ts []tools.Tool, name string) tools.Tool {
 }
 
 func TestMemoryToolsRememberRecallForget(t *testing.T) {
-	mem := NewStoreUserMemory(NewInMemoryStore())
+	mem := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ts := MemoryTools(mem)
 	ctx := withSession(context.Background(), &Session{UserID: "u1"})
 
@@ -66,7 +66,7 @@ func TestMemoryToolsRememberRecallForget(t *testing.T) {
 }
 
 func TestRememberRejectsBlank(t *testing.T) {
-	ts := MemoryTools(NewStoreUserMemory(NewInMemoryStore()))
+	ts := MemoryTools(NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{}))
 	ctx := withSession(context.Background(), &Session{UserID: "u1"})
 	if _, err := memToolByName(ts, "remember").Execute(ctx, json.RawMessage(`{"text":"  "}`)); err == nil {
 		t.Error("expected error remembering blank text")
@@ -74,7 +74,7 @@ func TestRememberRejectsBlank(t *testing.T) {
 }
 
 func TestForgetUnknownIDReports(t *testing.T) {
-	ts := MemoryTools(NewStoreUserMemory(NewInMemoryStore()))
+	ts := MemoryTools(NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{}))
 	ctx := withSession(context.Background(), &Session{UserID: "u1"})
 	out, err := memToolByName(ts, "forget").Execute(ctx, json.RawMessage(`{"id":"nope"}`))
 	if err != nil {

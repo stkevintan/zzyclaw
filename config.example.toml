@@ -27,9 +27,12 @@ owners = []           # user IDs allowed to run dangerous tools (e.g. run_shell)
 # Long-term, per-user memory (off by default). When enabled the agent gets the
 # remember/recall/forget tools and durable facts are surfaced into its system
 # prompt. Memory is stored in the same place as conversation history (Redis when
-# configured, otherwise in-process) and is fully isolated per user.
-memory_enabled = false   # enable long-term memory
-memory_inject = 8        # remembered facts injected into the system prompt each turn; 0 => default
+# configured, otherwise in-process) and is fully isolated per user. Recall is
+# semantic: facts are embedded via the Copilot embeddings API and ranked by
+# cosine similarity.
+memory_enabled = false              # enable long-term memory
+memory_inject = 8                   # remembered facts injected into the system prompt each turn; 0 => default
+embedding_model = "text-embedding-3-small"  # model used to embed/rank memory; empty => client default
 
 shell_timeout_seconds = 120  # max wall-clock per run_shell command (builds/tests)
 

@@ -104,9 +104,12 @@ Key safety mechanics:
   history (Redis when configured, otherwise in-process) and are isolated per
   user, so the agent can retain preferences and context across sessions
   ([agent/usermemory.go](agent/usermemory.go),
-  [agent/memorytools.go](agent/memorytools.go)). Ranking is keyword-overlap in
-  this version; the `UserMemory` interface leaves room for a future
-  embedding/vector adapter (e.g. mem0) without changing call sites.
+  [agent/memorytools.go](agent/memorytools.go)). Recall is **semantic**: each
+  fact is embedded once (via the Copilot embeddings API, `embedding_model`,
+  default `text-embedding-3-small`) and queries are ranked by cosine
+  similarity, so "what can't they eat?" surfaces "Allergic to peanuts" without
+  shared keywords. The `UserMemory` interface keeps the embedder pluggable
+  (e.g. a future mem0/vector-DB backend) without changing call sites.
 
 ## 2. Skill management
 

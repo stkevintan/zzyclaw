@@ -2,11 +2,45 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 )
 
+// fakeEmbedder is a deterministic, offline stand-in for the Copilot embeddings
+// API. It encodes a bag of hashed words, so cosine similarity reflects shared
+// vocabulary — enough to exercise ranking, ordering, and persistence without a
+// network call.
+type fakeEmbedder struct{}
+
+const fakeEmbedDim = 256
+
+func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		v := make([]float32, fakeEmbedDim)
+		for _, w := range strings.Fields(strings.ToLower(t)) {
+			h := uint32(2166136261)
+			for j := 0; j < len(w); j++ {
+				h ^= uint32(w[j])
+				h *= 16777619
+			}
+			v[h%fakeEmbedDim]++
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// errEmbedder always fails, to exercise the error paths.
+type errEmbedder struct{}
+
+func (errEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, fmt.Errorf("embed boom")
+}
+
 func TestUserMemoryAddListAndDedup(t *testing.T) {
-	m := NewStoreUserMemory(NewInMemoryStore())
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()
 
 	a, err := m.Add(ctx, "u1", "Prefers dark mode")
@@ -37,22 +71,22 @@ func TestUserMemoryAddListAndDedup(t *testing.T) {
 }
 
 func TestUserMemoryAddRejectsBlank(t *testing.T) {
-	m := NewStoreUserMemory(NewInMemoryStore())
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	if _, err := m.Add(context.Background(), "u1", "   "); err == nil {
 		t.Error("expected error for blank fact")
 	}
 }
 
-func TestUserMemorySearchKeyword(t *testing.T) {
-	m := NewStoreUserMemory(NewInMemoryStore())
+func TestUserMemorySearchRanksRelevant(t *testing.T) {
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()
 	_, _ = m.Add(ctx, "u1", "Allergic to peanuts")
 	_, _ = m.Add(ctx, "u1", "Works as a math teacher")
 	_, _ = m.Add(ctx, "u1", "Lives in Shanghai")
 
-	// v1 ranking is keyword overlap (no embeddings), so the query must share a
-	// literal word with the fact.
-	got, err := m.Search(ctx, "u1", "peanuts please", 5)
+	// The fake embedder is bag-of-words, so the query shares a word with the
+	// target fact; with real embeddings this also matches paraphrases.
+	got, err := m.Search(ctx, "u1", "got any peanuts snack", 5)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -61,8 +95,26 @@ func TestUserMemorySearchKeyword(t *testing.T) {
 	}
 }
 
+func TestUserMemoryAddPropagatesEmbedError(t *testing.T) {
+	m := NewStoreUserMemory(NewInMemoryStore(), errEmbedder{})
+	if _, err := m.Add(context.Background(), "u1", "something"); err == nil {
+		t.Error("expected Add to fail when embedding fails")
+	}
+}
+
+func TestUserMemorySearchPropagatesEmbedError(t *testing.T) {
+	ctx := context.Background()
+	// Seed a fact with a working embedder, then search with a failing one over
+	// the same store to isolate the query-embed failure.
+	store := NewInMemoryStore()
+	_, _ = NewStoreUserMemory(store, fakeEmbedder{}).Add(ctx, "u1", "a fact")
+	if _, err := NewStoreUserMemory(store, errEmbedder{}).Search(ctx, "u1", "query", 5); err == nil {
+		t.Error("expected Search to fail when query embedding fails")
+	}
+}
+
 func TestUserMemorySearchEmptyReturnsRecent(t *testing.T) {
-	m := NewStoreUserMemory(NewInMemoryStore())
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()
 	_, _ = m.Add(ctx, "u1", "first")
 	last, _ := m.Add(ctx, "u1", "second")
@@ -77,7 +129,7 @@ func TestUserMemorySearchEmptyReturnsRecent(t *testing.T) {
 }
 
 func TestUserMemoryDelete(t *testing.T) {
-	m := NewStoreUserMemory(NewInMemoryStore())
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()
 	f, _ := m.Add(ctx, "u1", "temporary note")
 
@@ -94,7 +146,7 @@ func TestUserMemoryDelete(t *testing.T) {
 }
 
 func TestUserMemoryIsolatedPerUser(t *testing.T) {
-	m := NewStoreUserMemory(NewInMemoryStore())
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()
 	_, _ = m.Add(ctx, "alice", "alice secret")
 
@@ -112,9 +164,9 @@ func TestUserMemoryPersistsThroughStore(t *testing.T) {
 	ctx := context.Background()
 	// First instance writes; a second instance over the same store must read it
 	// back, proving facts are persisted (not just cached in the first instance).
-	_, _ = NewStoreUserMemory(store).Add(ctx, "u1", "durable fact")
+	_, _ = NewStoreUserMemory(store, fakeEmbedder{}).Add(ctx, "u1", "durable fact")
 
-	facts, err := NewStoreUserMemory(store).List(ctx, "u1")
+	facts, err := NewStoreUserMemory(store, fakeEmbedder{}).List(ctx, "u1")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

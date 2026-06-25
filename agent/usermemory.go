@@ -3,8 +3,12 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -24,23 +28,38 @@ type Fact struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// storedFact is a Fact plus its embedding vector. The vector is kept internal to
+// the memory layer (never returned to tools or the engine) and is what powers
+// semantic search.
+type storedFact struct {
+	Fact
+	Vec vector `json:"vec"`
+}
+
+// Embedder turns text into vectors for semantic similarity search. One vector is
+// returned per input string, in input order. It is the only external dependency
+// of the memory layer; in production it is backed by the Copilot embeddings API.
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
 // UserMemory is a long-term, per-user memory layer kept separate from
 // conversation history. It stores durable facts the agent (or user) chooses to
 // remember and retrieves the most relevant ones on demand. Every operation is
 // scoped to a single userID: one user's memory is never visible to another.
 //
-// This first implementation ranks by keyword overlap and recency (no
-// embeddings), which keeps it dependency-free; the interface is deliberately
-// small so a vector- or service-backed implementation (e.g. mem0) can be
-// substituted later without touching the engine.
+// Relevance is ranked by semantic similarity: each fact is embedded once when
+// stored, and a query is embedded and compared by cosine similarity. The
+// interface is deliberately small so a service-backed implementation (e.g. mem0)
+// can be substituted later without touching the engine.
 type UserMemory interface {
 	// Add stores text as a new fact for userID and returns it. Blank text is
 	// rejected; an exact (case-insensitive) duplicate returns the existing fact
 	// instead of creating another.
 	Add(ctx context.Context, userID, text string) (Fact, error)
-	// Search returns up to limit facts for userID ranked by relevance to query
-	// (keyword overlap, then recency). An empty query returns the most recent
-	// facts. limit <= 0 uses a small default.
+	// Search returns up to limit facts for userID ranked by semantic relevance to
+	// query. An empty query returns the most recent facts. limit <= 0 uses a
+	// small default.
 	Search(ctx context.Context, userID, query string, limit int) ([]Fact, error)
 	// List returns all of userID's facts, most recent first.
 	List(ctx context.Context, userID string) ([]Fact, error)
@@ -55,7 +74,8 @@ type UserMemory interface {
 // store I/O happens under that user's own lock so one user's latency never
 // blocks another.
 type storeUserMemory struct {
-	store Store
+	store    Store
+	embedder Embedder
 
 	mu    sync.Mutex
 	cache map[string]*userMemEntry
@@ -66,20 +86,21 @@ type storeUserMemory struct {
 type userMemEntry struct {
 	mu     sync.Mutex
 	loaded bool
-	facts  []Fact
+	facts  []storedFact
 }
 
-// NewStoreUserMemory returns a per-user memory backed by store. It shares the
-// same durability as conversation memory: facts survive restarts when the store
-// is Redis-backed, and are process-local otherwise.
-func NewStoreUserMemory(store Store) UserMemory {
-	return &storeUserMemory{store: store, cache: make(map[string]*userMemEntry)}
+// NewStoreUserMemory returns a per-user memory backed by store and embedder. It
+// shares the same durability as conversation memory: facts survive restarts when
+// the store is Redis-backed, and are process-local otherwise. embedder must be
+// non-nil; every fact is embedded when stored so search can rank semantically.
+func NewStoreUserMemory(store Store, embedder Embedder) UserMemory {
+	return &storeUserMemory{store: store, embedder: embedder, cache: make(map[string]*userMemEntry)}
 }
 
 func memoryMetaKey(userID string) string { return "memory:" + userID }
 
 type memoryRecord struct {
-	Facts []Fact `json:"facts"`
+	Facts []storedFact `json:"facts"`
 }
 
 // entry returns the per-user cache entry, creating it on first access. Only the
@@ -136,14 +157,24 @@ func (m *storeUserMemory) Add(ctx context.Context, userID, text string) (Fact, e
 	m.ensureLoaded(ctx, userID, e)
 
 	// Collapse exact (case-insensitive) duplicates so repeated remembers don't
-	// bloat the store or skew the grant-free recency ranking.
+	// bloat the store or skew ranking, and to avoid a needless embedding call.
 	for _, f := range e.facts {
 		if strings.EqualFold(f.Text, text) {
-			return f, nil
+			return f.Fact, nil
 		}
 	}
 
-	f := Fact{ID: newFactID(), Text: text, CreatedAt: time.Now().UTC()}
+	// Embed once at write time; failure fails the remember so we never store a
+	// fact that semantic search can't see.
+	vecs, err := m.embedder.Embed(ctx, []string{text})
+	if err != nil {
+		return Fact{}, fmt.Errorf("memory: embed fact: %w", err)
+	}
+
+	f := storedFact{
+		Fact: Fact{ID: newFactID(), Text: text, CreatedAt: time.Now().UTC()},
+		Vec:  vector(vecs[0]),
+	}
 	e.facts = append(e.facts, f)
 	// Enforce the per-user cap by dropping the oldest facts.
 	if len(e.facts) > maxFactsPerUser {
@@ -152,7 +183,7 @@ func (m *storeUserMemory) Add(ctx context.Context, userID, text string) (Fact, e
 	if err := m.persist(ctx, userID, e); err != nil {
 		return Fact{}, err
 	}
-	return f, nil
+	return f.Fact, nil
 }
 
 func (m *storeUserMemory) Search(ctx context.Context, userID, query string, limit int) ([]Fact, error) {
@@ -164,25 +195,31 @@ func (m *storeUserMemory) Search(ctx context.Context, userID, query string, limi
 	defer e.mu.Unlock()
 	m.ensureLoaded(ctx, userID, e)
 
-	facts := append([]Fact(nil), e.facts...)
-	terms := tokenize(query)
-	if len(terms) == 0 {
+	facts := append([]storedFact(nil), e.facts...)
+	if strings.TrimSpace(query) == "" || len(facts) == 0 {
 		// No query: most recent first.
 		sort.SliceStable(facts, func(i, j int) bool {
 			return facts[i].CreatedAt.After(facts[j].CreatedAt)
 		})
-		return capFacts(facts, limit), nil
+		return capFacts(toFacts(facts), limit), nil
 	}
 
+	vecs, err := m.embedder.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, fmt.Errorf("memory: embed query: %w", err)
+	}
+	q := vecs[0]
+
 	type scored struct {
-		f     Fact
-		score int
+		f     storedFact
+		score float32
 	}
 	ranked := make([]scored, 0, len(facts))
 	for _, f := range facts {
-		if s := overlap(terms, tokenize(f.Text)); s > 0 {
-			ranked = append(ranked, scored{f: f, score: s})
+		if len(f.Vec) == 0 {
+			continue
 		}
+		ranked = append(ranked, scored{f: f, score: cosine(q, f.Vec)})
 	}
 	sort.SliceStable(ranked, func(i, j int) bool {
 		if ranked[i].score != ranked[j].score {
@@ -190,11 +227,11 @@ func (m *storeUserMemory) Search(ctx context.Context, userID, query string, limi
 		}
 		return ranked[i].f.CreatedAt.After(ranked[j].f.CreatedAt)
 	})
-	out := make([]Fact, 0, len(ranked))
+	out := make([]storedFact, 0, len(ranked))
 	for _, r := range ranked {
 		out = append(out, r.f)
 	}
-	return capFacts(out, limit), nil
+	return capFacts(toFacts(out), limit), nil
 }
 
 func (m *storeUserMemory) List(ctx context.Context, userID string) ([]Fact, error) {
@@ -202,11 +239,11 @@ func (m *storeUserMemory) List(ctx context.Context, userID string) ([]Fact, erro
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	m.ensureLoaded(ctx, userID, e)
-	facts := append([]Fact(nil), e.facts...)
+	facts := append([]storedFact(nil), e.facts...)
 	sort.SliceStable(facts, func(i, j int) bool {
 		return facts[i].CreatedAt.After(facts[j].CreatedAt)
 	})
-	return facts, nil
+	return toFacts(facts), nil
 }
 
 func (m *storeUserMemory) Delete(ctx context.Context, userID, id string) (bool, error) {
@@ -253,35 +290,14 @@ func newFactID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// tokenize lowercases s and splits it into a set of word tokens (letters and
-// digits), dropping very short tokens that add noise to keyword matching.
-func tokenize(s string) map[string]struct{} {
-	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !isWordRune(r)
-	})
-	set := make(map[string]struct{}, len(fields))
-	for _, f := range fields {
-		if len(f) >= 2 {
-			set[f] = struct{}{}
-		}
+// toFacts strips the embedding vectors, returning the public Fact view callers
+// (tools, engine) see.
+func toFacts(stored []storedFact) []Fact {
+	out := make([]Fact, len(stored))
+	for i, s := range stored {
+		out[i] = s.Fact
 	}
-	return set
-}
-
-func isWordRune(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
-		r >= 0x80 // keep multibyte (e.g. CJK) runes as word characters
-}
-
-// overlap counts how many query terms appear in the fact's token set.
-func overlap(query, fact map[string]struct{}) int {
-	n := 0
-	for t := range query {
-		if _, ok := fact[t]; ok {
-			n++
-		}
-	}
-	return n
+	return out
 }
 
 func capFacts(facts []Fact, limit int) []Fact {
@@ -289,4 +305,56 @@ func capFacts(facts []Fact, limit int) []Fact {
 		return facts[:limit]
 	}
 	return facts
+}
+
+// cosine returns the cosine similarity of a and b. Mismatched or empty vectors
+// score 0 so they never rank above a genuine match.
+func cosine(a, b []float32) float32 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := range a {
+		x, y := float64(a[i]), float64(b[i])
+		dot += x * y
+		na += x * x
+		nb += y * y
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return float32(dot / (math.Sqrt(na) * math.Sqrt(nb)))
+}
+
+// vector is a float32 embedding that serializes as a base64-encoded blob of
+// little-endian float32s. This keeps the stored record compact (4 bytes per
+// dimension) compared with a JSON array of decimal numbers.
+type vector []float32
+
+func (v vector) MarshalJSON() ([]byte, error) {
+	buf := make([]byte, 4*len(v))
+	for i, f := range v {
+		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(f))
+	}
+	return json.Marshal(base64.StdEncoding.EncodeToString(buf))
+}
+
+func (v *vector) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return fmt.Errorf("memory: decode vector: %w", err)
+	}
+	if len(raw)%4 != 0 {
+		return fmt.Errorf("memory: vector blob length %d not a multiple of 4", len(raw))
+	}
+	out := make(vector, len(raw)/4)
+	for i := range out {
+		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:]))
+	}
+	*v = out
+	return nil
 }

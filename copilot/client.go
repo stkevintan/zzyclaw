@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	defaultModel    = "gpt-4o"
-	tokenURL        = "https://api.github.com/copilot_internal/v2/token"
-	defaultBaseURL  = "https://api.githubcopilot.com"
-	tokenSafeMargin = 5 * time.Minute
+	defaultModel          = "gpt-4o"
+	defaultEmbeddingModel = "text-embedding-3-small"
+	tokenURL              = "https://api.github.com/copilot_internal/v2/token"
+	defaultBaseURL        = "https://api.githubcopilot.com"
+	tokenSafeMargin       = 5 * time.Minute
 )
 
 // Client is a GitHub Copilot API client that automatically manages
@@ -469,4 +470,94 @@ func (c *Client) doResponses(ctx context.Context, token string, reqBody chatRequ
 	}
 
 	return "", fmt.Errorf("copilot: empty response")
+}
+
+// embeddingsRequest is the request body for the /embeddings endpoint.
+type embeddingsRequest struct {
+	Model string   `json:"model"`
+	Input []string `json:"input"`
+}
+
+// embeddingsResponse is the OpenAI-style response from /embeddings.
+type embeddingsResponse struct {
+	Data []embeddingDatum `json:"data"`
+}
+
+type embeddingDatum struct {
+	Index     int       `json:"index"`
+	Embedding []float32 `json:"embedding"`
+}
+
+// Embeddings returns one vector per input string, in input order, using the
+// given embedding model (empty uses the default). It targets the same base URL
+// as chat; the /embeddings endpoint additionally requires the
+// Copilot-Integration-Id header.
+func (c *Client) Embeddings(ctx context.Context, model string, inputs []string) ([][]float32, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	if model == "" {
+		model = defaultEmbeddingModel
+	}
+
+	token, err := c.resolveToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := json.Marshal(embeddingsRequest{Model: model, Input: inputs})
+	if err != nil {
+		return nil, fmt.Errorf("copilot: marshal embeddings request: %w", err)
+	}
+
+	endpoint := c.baseURL + "/embeddings"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("copilot: create embeddings request: %w", err)
+	}
+	c.setHeaders(req, token)
+	// The /embeddings endpoint rejects requests without an integration id
+	// (manifests as a connection reset), unlike /chat/completions.
+	req.Header.Set("Copilot-Integration-Id", "vscode-chat")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("copilot: embeddings request: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Warn("failed to close embeddings body", "error", closeErr)
+		}
+	}()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("copilot: read embeddings response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("copilot: embeddings status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var er embeddingsResponse
+	if err := json.Unmarshal(respBody, &er); err != nil {
+		return nil, fmt.Errorf("copilot: unmarshal embeddings response: %w", err)
+	}
+	if len(er.Data) != len(inputs) {
+		return nil, fmt.Errorf("copilot: embeddings returned %d vectors for %d inputs", len(er.Data), len(inputs))
+	}
+
+	// The API may return data out of order; place each vector by its index.
+	out := make([][]float32, len(inputs))
+	for _, d := range er.Data {
+		if d.Index < 0 || d.Index >= len(out) {
+			return nil, fmt.Errorf("copilot: embeddings response index %d out of range", d.Index)
+		}
+		out[d.Index] = d.Embedding
+	}
+	for i, v := range out {
+		if len(v) == 0 {
+			return nil, fmt.Errorf("copilot: embeddings missing vector for input %d", i)
+		}
+	}
+	return out, nil
 }

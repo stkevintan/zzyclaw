@@ -171,9 +171,11 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	// Long-term, per-user memory (off by default). When enabled it shares the
 	// same store as conversation history and grants, exposes the
 	// remember/recall/forget tools, and is surfaced into the system prompt.
+	// Relevance is ranked by embedding the facts via the Copilot embeddings API.
 	var memory agent.UserMemory
 	if cfg.Agent.MemoryEnabled {
-		memory = agent.NewStoreUserMemory(store)
+		embedder := agent.NewCopilotEmbedder(agentClient, cfg.Agent.EmbeddingModel)
+		memory = agent.NewStoreUserMemory(store, embedder)
 		for _, t := range agent.MemoryTools(memory) {
 			toolReg.Register(t)
 		}

@@ -44,8 +44,9 @@ type AgentConfig struct {
 	AutoApprove      []string `mapstructure:"auto_approve"`      // tool names that skip the approval prompt
 	Owners           []string `mapstructure:"owners"`            // user IDs allowed to run dangerous tools; empty disables the gate
 
-	MemoryEnabled bool `mapstructure:"memory_enabled"` // enable long-term, per-user memory (remember/recall/forget tools + system-prompt injection)
-	MemoryInject  int  `mapstructure:"memory_inject"`  // number of remembered facts injected into the system prompt each turn; 0 uses a small default
+	MemoryEnabled  bool   `mapstructure:"memory_enabled"`  // enable long-term, per-user memory (remember/recall/forget tools + system-prompt injection)
+	MemoryInject   int    `mapstructure:"memory_inject"`   // number of remembered facts injected into the system prompt each turn; 0 uses a small default
+	EmbeddingModel string `mapstructure:"embedding_model"` // embedding model used to rank memory; empty uses the client default
 
 	ShellTimeoutSeconds int `mapstructure:"shell_timeout_seconds"` // max wall-clock per run_shell command
 
