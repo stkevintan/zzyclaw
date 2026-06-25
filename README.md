@@ -97,6 +97,19 @@ Key safety mechanics:
   messages stay verbatim, so long conversations retain context without growing
   unbounded. Users can also trigger it on demand with `/compact`
   ([agent/compact.go](agent/compact.go)).
+- **Long-term memory** — optional, per-user, and off by default
+  (`memory_enabled`). When on, the agent gets `remember`, `recall`, and
+  `forget` tools and a capped set of durable facts is injected into its system
+  prompt each turn (`memory_inject`). Facts are stored alongside conversation
+  history (Redis when configured, otherwise in-process) and are isolated per
+  user, so the agent can retain preferences and context across sessions
+  ([agent/usermemory.go](agent/usermemory.go),
+  [agent/memorytools.go](agent/memorytools.go)). Recall is **semantic**: each
+  fact is embedded once (via the Copilot embeddings API, `embedding_model`,
+  default `text-embedding-3-small`) and queries are ranked by cosine
+  similarity, so "what can't they eat?" surfaces "Allergic to peanuts" without
+  shared keywords. The `UserMemory` interface keeps the embedder pluggable
+  (e.g. a future mem0/vector-DB backend) without changing call sites.
 
 ## 2. Skill management
 
