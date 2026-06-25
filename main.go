@@ -168,6 +168,18 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	// (persistent with Redis, process-local otherwise).
 	grants := agent.NewStoreGrantStore(store)
 
+	// Long-term, per-user memory (off by default). When enabled it shares the
+	// same store as conversation history and grants, exposes the
+	// remember/recall/forget tools, and is surfaced into the system prompt.
+	var memory agent.UserMemory
+	if cfg.Agent.MemoryEnabled {
+		memory = agent.NewStoreUserMemory(store)
+		for _, t := range agent.MemoryTools(memory) {
+			toolReg.Register(t)
+		}
+		slog.Info("long-term memory enabled")
+	}
+
 	engine := agent.NewEngine(agentClient, toolReg, skillMgr, store, agent.EngineConfig{
 		MaxIterations:    cfg.Agent.MaxIterations,
 		MaxHistory:       cfg.Agent.MaxHistory,
@@ -176,6 +188,8 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		AutoApprove:      cfg.Agent.AutoApprove,
 		Owners:           cfg.Agent.Owners,
 		Grants:           grants,
+		Memory:           memory,
+		MemoryInject:     cfg.Agent.MemoryInject,
 	})
 	sessions := agent.NewSessionManager(store)
 	return engine, sessions, skillMgr, nil

@@ -37,6 +37,13 @@ type EngineConfig struct {
 	// Grants persists "always approve" decisions so repeated equivalent dangerous
 	// actions don't re-prompt. When nil, approvals are never remembered.
 	Grants GrantStore
+	// Memory is the long-term, per-user memory surfaced into the system prompt and
+	// exposed via the remember/recall/forget tools. When nil, long-term memory is
+	// disabled.
+	Memory UserMemory
+	// MemoryInject is the number of remembered facts injected into the system
+	// prompt each turn. <= 0 uses a small default.
+	MemoryInject int
 }
 
 // Decision is a user's response to an approval prompt for a dangerous action.
@@ -69,6 +76,9 @@ type Engine struct {
 	owners      map[string]struct{}
 	persona     string
 	grants      GrantStore
+
+	memory       UserMemory
+	memoryInject int
 
 	// summarize condenses an older slice of messages into a compact note. It is
 	// a field so tests can inject a deterministic summarizer; by default it calls
@@ -115,6 +125,10 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 	if grants == nil {
 		grants = NewNoopGrantStore()
 	}
+	memoryInject := cfg.MemoryInject
+	if memoryInject <= 0 {
+		memoryInject = 8
+	}
 	e := &Engine{
 		client:      client,
 		tools:       toolReg,
@@ -128,6 +142,9 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 		owners:      owners,
 		persona:     persona,
 		grants:      grants,
+
+		memory:       cfg.Memory,
+		memoryInject: memoryInject,
 	}
 	e.summarize = e.summarizeWithModel
 	return e
@@ -201,7 +218,7 @@ func (e *Engine) Resume(ctx context.Context, sess *Session, decision Decision) (
 func (e *Engine) loop(ctx context.Context, sess *Session, messages []copilot.Message) (Outcome, error) {
 	specs := e.specs()
 	for iter := 0; iter < e.maxIter; iter++ {
-		res, err := e.client.ChatWithTools(ctx, e.fullMessages(sess, messages), specs)
+		res, err := e.client.ChatWithTools(ctx, e.fullMessages(ctx, sess, messages), specs)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -357,16 +374,17 @@ func (c toolCallsLog) LogValue() slog.Value {
 }
 
 // fullMessages prepends the dynamic system prompt to the conversation.
-func (e *Engine) fullMessages(sess *Session, messages []copilot.Message) []copilot.Message {
+func (e *Engine) fullMessages(ctx context.Context, sess *Session, messages []copilot.Message) []copilot.Message {
 	out := make([]copilot.Message, 0, len(messages)+1)
-	out = append(out, copilot.Message{Role: roleSystem, Content: e.systemPrompt(sess)})
+	out = append(out, copilot.Message{Role: roleSystem, Content: e.systemPrompt(ctx, sess)})
 	out = append(out, messages...)
 	return out
 }
 
-// systemPrompt assembles the persona, the catalog of available skills, and the
-// instructions of any skills currently loaded in the session.
-func (e *Engine) systemPrompt(sess *Session) string {
+// systemPrompt assembles the persona, the catalog of available skills, the
+// instructions of any skills currently loaded in the session, and any long-term
+// memory remembered for the active user.
+func (e *Engine) systemPrompt(ctx context.Context, sess *Session) string {
 	var b strings.Builder
 	b.WriteString(e.persona)
 
@@ -384,6 +402,15 @@ func (e *Engine) systemPrompt(sess *Session) string {
 	if loaded := loadedSkillInstructions(e.skills, sess); len(loaded) > 0 {
 		b.WriteString("\n# Loaded skill instructions\n")
 		b.WriteString(strings.Join(loaded, "\n\n"))
+	}
+
+	if e.memory != nil && userID != "" {
+		if facts, err := e.memory.Search(ctx, userID, "", e.memoryInject); err == nil && len(facts) > 0 {
+			b.WriteString("\n\n# Long-term memory\nFacts you previously remembered about this user (use recall to search for more, forget to remove an outdated one):\n")
+			for _, f := range facts {
+				fmt.Fprintf(&b, "- %s\n", f.Text)
+			}
+		}
 	}
 	return b.String()
 }
