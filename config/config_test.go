@@ -1,27 +1,18 @@
 package config
 
 import (
-	"os"
+	"slices"
 	"testing"
 )
 
-// loadInTempDir runs Load from an empty working directory so a developer's local
-// config.toml can't influence env-binding assertions.
-func loadInTempDir(t *testing.T) *Config {
+// loadFromEmptyDir loads config from an isolated empty dir so a developer's local
+// config.toml can't influence env-binding assertions, and without the
+// process-wide side effects of os.Chdir (keeping these tests parallel-safe).
+func loadFromEmptyDir(t *testing.T) *Config {
 	t.Helper()
-	dir := t.TempDir()
-	wd, err := os.Getwd()
+	cfg, err := loadFrom(t.TempDir())
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(wd) })
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("loadFrom: %v", err)
 	}
 	return cfg
 }
@@ -39,7 +30,7 @@ func TestEnvBindsAgentScalars(t *testing.T) {
 	t.Setenv("ZZY_AGENT_SHELL_TIMEOUT_SECONDS", "45")
 	t.Setenv("ZZY_AGENT_SKILL_MEMORY_MB", "512")
 
-	cfg := loadInTempDir(t)
+	cfg := loadFromEmptyDir(t)
 
 	if !cfg.Agent.MemoryEnabled {
 		t.Errorf("MemoryEnabled = false, want true")
@@ -71,18 +62,11 @@ func TestEnvBindsAgentSlices(t *testing.T) {
 	t.Setenv("ZZY_AGENT_OWNERS", "alice,bob")
 	t.Setenv("ZZY_AGENT_NETWORK_ALLOWLIST", "example.com,*.github.com")
 
-	cfg := loadInTempDir(t)
+	cfg := loadFromEmptyDir(t)
 
 	wantEq := func(name string, got, want []string) {
-		if len(got) != len(want) {
+		if !slices.Equal(got, want) {
 			t.Errorf("%s = %v, want %v", name, got, want)
-			return
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Errorf("%s = %v, want %v", name, got, want)
-				return
-			}
 		}
 	}
 	wantEq("AutoApprove", cfg.Agent.AutoApprove, []string{"http_get", "run_shell"})

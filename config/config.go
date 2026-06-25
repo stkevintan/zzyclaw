@@ -71,9 +71,17 @@ func (c *LogConfig) SlogLevel() slog.Level {
 	}
 }
 
-// Load reads configuration from file and environment variables.
-// It looks for config.toml in the current directory.
+// Load reads configuration from file and environment variables. It looks for
+// config.toml in the current directory, then the filesystem root (for container
+// deployments). Environment variables (ZZY_*) always override file values.
 func Load() (*Config, error) {
+	return loadFrom(".", "/")
+}
+
+// loadFrom is the testable core of Load: it searches the given directories for
+// config.toml instead of relying on the process working directory, so tests can
+// supply an isolated temp dir without the process-wide side effects of os.Chdir.
+func loadFrom(configPaths ...string) (*Config, error) {
 	v := viper.New()
 
 	// Defaults
@@ -109,8 +117,9 @@ func Load() (*Config, error) {
 	// Config file
 	v.SetConfigName("config")
 	v.SetConfigType("toml")
-	v.AddConfigPath(".")
-	v.AddConfigPath("/")
+	for _, p := range configPaths {
+		v.AddConfigPath(p)
+	}
 
 	// Environment variables: ZZY_LOG_LEVEL, ZZY_COPILOT_TOKEN, etc.
 	v.SetEnvPrefix("ZZY")
