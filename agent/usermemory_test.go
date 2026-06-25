@@ -84,6 +84,17 @@ func TestUserMemoryAddRejectsEmptyUserID(t *testing.T) {
 	}
 }
 
+func TestUserMemorySearchAndListRejectEmptyUserID(t *testing.T) {
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
+	ctx := context.Background()
+	if _, err := m.Search(ctx, "", "anything", 5); err != errEmptyUserID {
+		t.Errorf("Search with empty userID = %v, want errEmptyUserID", err)
+	}
+	if _, err := m.List(ctx, ""); err != errEmptyUserID {
+		t.Errorf("List with empty userID = %v, want errEmptyUserID", err)
+	}
+}
+
 func TestUserMemorySearchRanksRelevant(t *testing.T) {
 	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()

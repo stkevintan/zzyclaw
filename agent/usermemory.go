@@ -200,28 +200,39 @@ func (m *storeUserMemory) Add(ctx context.Context, userID, text string) (Fact, e
 }
 
 func (m *storeUserMemory) Search(ctx context.Context, userID, query string, limit int) ([]Fact, error) {
+	if userID == "" {
+		return nil, errEmptyUserID
+	}
 	if limit <= 0 {
 		limit = 5
 	}
+	query = strings.TrimSpace(query)
+
+	// Embed the query before taking the per-user lock: the embedding is a network
+	// call and doesn't depend on the user's stored facts, so holding the lock
+	// across it would needlessly block other operations for the same user.
+	var q []float32
+	if query != "" {
+		vecs, err := m.embedder.Embed(ctx, []string{query})
+		if err != nil {
+			return nil, fmt.Errorf("memory: embed query: %w", err)
+		}
+		q = vecs[0]
+	}
+
 	e := m.entry(userID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	m.ensureLoaded(ctx, userID, e)
 
 	facts := append([]storedFact(nil), e.facts...)
-	if strings.TrimSpace(query) == "" || len(facts) == 0 {
-		// No query: most recent first.
+	if query == "" || len(facts) == 0 {
+		// No query (or nothing stored): most recent first.
 		sort.SliceStable(facts, func(i, j int) bool {
 			return facts[i].CreatedAt.After(facts[j].CreatedAt)
 		})
 		return capFacts(toFacts(facts), limit), nil
 	}
-
-	vecs, err := m.embedder.Embed(ctx, []string{query})
-	if err != nil {
-		return nil, fmt.Errorf("memory: embed query: %w", err)
-	}
-	q := vecs[0]
 
 	type scored struct {
 		f     storedFact
@@ -248,6 +259,9 @@ func (m *storeUserMemory) Search(ctx context.Context, userID, query string, limi
 }
 
 func (m *storeUserMemory) List(ctx context.Context, userID string) ([]Fact, error) {
+	if userID == "" {
+		return nil, errEmptyUserID
+	}
 	e := m.entry(userID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
