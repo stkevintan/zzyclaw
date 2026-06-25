@@ -91,6 +91,13 @@ func Load() (*Config, error) {
 	v.SetDefault("agent.compact_keep", 12)
 	v.SetDefault("agent.skills_dir", "")
 	v.SetDefault("agent.workspace_dir", "")
+	// Registering these (even at their zero values) is required for viper's
+	// AutomaticEnv to bind ZZY_AGENT_MEMORY_ENABLED / _MEMORY_INJECT /
+	// _EMBEDDING_MODEL: AutomaticEnv only resolves env vars for keys viper
+	// already knows about.
+	v.SetDefault("agent.memory_enabled", false)
+	v.SetDefault("agent.memory_inject", 0)
+	v.SetDefault("agent.embedding_model", "")
 	v.SetDefault("agent.shell_timeout_seconds", 120)
 	v.SetDefault("agent.deno_path", "")
 	v.SetDefault("agent.skill_timeout_seconds", 30)
