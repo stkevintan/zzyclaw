@@ -77,6 +77,13 @@ func TestUserMemoryAddRejectsBlank(t *testing.T) {
 	}
 }
 
+func TestUserMemoryAddRejectsEmptyUserID(t *testing.T) {
+	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
+	if _, err := m.Add(context.Background(), "", "some text"); err != errEmptyUserID {
+		t.Errorf("Add with empty userID = %v, want errEmptyUserID", err)
+	}
+}
+
 func TestUserMemorySearchRanksRelevant(t *testing.T) {
 	m := NewStoreUserMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()

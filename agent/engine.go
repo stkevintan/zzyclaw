@@ -405,7 +405,10 @@ func (e *Engine) systemPrompt(ctx context.Context, sess *Session) string {
 	}
 
 	if e.memory != nil && userID != "" {
-		if facts, err := e.memory.Search(ctx, userID, "", e.memoryInject); err == nil && len(facts) > 0 {
+		facts, err := e.memory.Search(ctx, userID, "", e.memoryInject)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to load long-term memory", "userID", userID, "error", err)
+		} else if len(facts) > 0 {
 			b.WriteString("\n\n# Long-term memory\nFacts you previously remembered about this user (use recall to search for more, forget to remove an outdated one):\n")
 			for _, f := range facts {
 				fmt.Fprintf(&b, "- %s\n", f.Text)

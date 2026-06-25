@@ -137,9 +137,11 @@ func (m *storeUserMemory) ensureLoaded(ctx context.Context, userID string, e *us
 	e.loaded = true
 }
 
-// persist writes e's facts back to the store. Callers must hold e.mu.
-func (m *storeUserMemory) persist(ctx context.Context, userID string, e *userMemEntry) error {
-	data, err := json.Marshal(memoryRecord{Facts: e.facts})
+// persist writes facts back to the store. It takes the slice explicitly (rather
+// than the entry) so callers can persist the new state *before* swapping it into
+// the cache, keeping the cache and store from diverging if a write fails.
+func (m *storeUserMemory) persist(ctx context.Context, userID string, facts []storedFact) error {
+	data, err := json.Marshal(memoryRecord{Facts: facts})
 	if err != nil {
 		return err
 	}
@@ -148,7 +150,10 @@ func (m *storeUserMemory) persist(ctx context.Context, userID string, e *userMem
 
 func (m *storeUserMemory) Add(ctx context.Context, userID, text string) (Fact, error) {
 	text = strings.TrimSpace(text)
-	if userID == "" || text == "" {
+	if userID == "" {
+		return Fact{}, errEmptyUserID
+	}
+	if text == "" {
 		return Fact{}, errBlankMemory
 	}
 	e := m.entry(userID)
@@ -175,14 +180,22 @@ func (m *storeUserMemory) Add(ctx context.Context, userID, text string) (Fact, e
 		Fact: Fact{ID: newFactID(), Text: text, CreatedAt: time.Now().UTC()},
 		Vec:  vector(vecs[0]),
 	}
-	e.facts = append(e.facts, f)
-	// Enforce the per-user cap by dropping the oldest facts.
-	if len(e.facts) > maxFactsPerUser {
-		e.facts = e.facts[len(e.facts)-maxFactsPerUser:]
+	// Build the next slice, persist it, and only then swap it into the cache, so
+	// a write failure leaves the cache untouched. Copying into a freshly sized
+	// slice when over the cap also lets the dropped oldest facts be GC'd rather
+	// than pinned by the cached backing array.
+	newFacts := make([]storedFact, 0, len(e.facts)+1)
+	newFacts = append(newFacts, e.facts...)
+	newFacts = append(newFacts, f)
+	if len(newFacts) > maxFactsPerUser {
+		active := make([]storedFact, maxFactsPerUser)
+		copy(active, newFacts[len(newFacts)-maxFactsPerUser:])
+		newFacts = active
 	}
-	if err := m.persist(ctx, userID, e); err != nil {
+	if err := m.persist(ctx, userID, newFacts); err != nil {
 		return Fact{}, err
 	}
+	e.facts = newFacts
 	return f.Fact, nil
 }
 
@@ -265,15 +278,23 @@ func (m *storeUserMemory) Delete(ctx context.Context, userID, id string) (bool, 
 	if idx < 0 {
 		return false, nil
 	}
-	e.facts = append(e.facts[:idx], e.facts[idx+1:]...)
-	if err := m.persist(ctx, userID, e); err != nil {
+	// Build the remaining set, persist it, then swap into the cache only on
+	// success (same cache/store-consistency reasoning as Add).
+	newFacts := make([]storedFact, 0, len(e.facts)-1)
+	newFacts = append(newFacts, e.facts[:idx]...)
+	newFacts = append(newFacts, e.facts[idx+1:]...)
+	if err := m.persist(ctx, userID, newFacts); err != nil {
 		return false, err
 	}
+	e.facts = newFacts
 	return true, nil
 }
 
 // errBlankMemory is returned when an empty fact is added.
 var errBlankMemory = &memoryError{"memory text must not be empty"}
+
+// errEmptyUserID is returned when an operation is missing a user scope.
+var errEmptyUserID = &memoryError{"user ID must not be empty"}
 
 type memoryError struct{ msg string }
 
