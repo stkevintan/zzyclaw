@@ -1,7 +1,7 @@
 # zzy
 
-A WeChat chat bot backed by a **ReAct-style AI agent**. Messages from WeChat are
-handled by a reasoning-and-acting loop that can use tools, manage its own
+A WeChat chat bot backed by an **agentic tool-calling AI agent**. Messages from WeChat are
+handled by an agentic loop that can use tools, manage its own
 skills, and run untrusted skill code inside a **Deno sandbox**. The model is
 served through the GitHub Copilot API.
 
@@ -12,7 +12,7 @@ served through the GitHub Copilot API.
 
 ## Features
 
-- **ReAct agent** — multi-step reason → act → observe loop over a tool registry.
+- **Agentic loop** — multi-step reason → act → observe loop over a tool registry.
 - **Skill management** — self-contained, pluggable skills loaded at runtime:
   builtin, owner-shared, and isolated per user.
 - **Deno-based sandbox** — user-authored skill code executes in Deno with
@@ -24,9 +24,9 @@ served through the GitHub Copilot API.
 
 ---
 
-## 1. ReAct-based AI agent bot
+## 1. Agentic tool-calling AI agent bot
 
-The agent runs a Reasoning-and-Acting loop ([agent/engine.go](agent/engine.go)):
+The agent runs an agentic tool-calling loop ([agent/engine.go](agent/engine.go)):
 on each turn it asks the model what to do, executes any requested tool calls,
 feeds the results back, and repeats until the model produces a final answer (or a
 dangerous action requires approval).
@@ -34,7 +34,7 @@ dangerous action requires approval).
 ```mermaid
 flowchart LR
     WeChat[WeChat message] --> MW[agent middleware]
-    MW --> Engine[ReAct engine]
+    MW --> Engine[Agentic engine]
     Engine -->|tool call| Tools[Tool registry]
     Tools -->|observation| Engine
     Engine -->|dangerous?| Approval{Owner approval}
@@ -270,7 +270,7 @@ inspect it with `docker compose exec app ls /app/data`).
 main.go            Wiring: config, agent assembly, bot manager, login
 config/            Configuration loading (TOML + ZZY_* env vars)
 copilot/           GitHub Copilot auth + chat client
-agent/             ReAct engine, sessions, memory, middleware
+agent/             Agentic engine, sessions, memory, middleware
   engine.go        The reason → act → observe loop
   skill/           Disk-backed skill registry (SKILL.md folders)
   tools/           Sandboxed filesystem, shell, http, and Deno runner

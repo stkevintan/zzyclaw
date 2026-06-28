@@ -1,6 +1,6 @@
 // Package tools defines the agent's pluggable tool interface and a registry of
 // built-in tools (filesystem access, script execution). Tools are the concrete
-// capabilities the ReAct engine exposes to the model via native function calling.
+// capabilities the agentic engine exposes to the model via native function calling.
 package tools
 
 import (

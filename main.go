@@ -85,8 +85,8 @@ func main() {
 // buildAgent constructs the agent's shared components: the conversation-memory
 // store, the skill manager (compiled-in builtin skills plus per-user skill
 // directories, with an optional shared on-disk skills directory), the built-in
-// tools (sandboxed filesystem + script runner + skill management) and the ReAct
-// engine.
+// tools (sandboxed filesystem + script runner + skill management) and the
+// agentic tool-calling engine.
 func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*agent.Engine, *agent.SessionManager, *skill.Manager, error) {
 	agentBase := filepath.Join(cfg.DataDir, "agent")
 	skillsDir := orDefault(cfg.Agent.SkillsDir, filepath.Join(agentBase, "skills"))

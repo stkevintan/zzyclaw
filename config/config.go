@@ -32,10 +32,10 @@ type RedisConfig struct {
 	TTLSeconds int    `mapstructure:"ttl_seconds"`
 }
 
-// AgentConfig configures the general ReAct agent.
+// AgentConfig configures the general agentic tool-calling agent.
 type AgentConfig struct {
 	Model            string   `mapstructure:"model"`             // overrides copilot.model for the agent when set
-	MaxIterations    int      `mapstructure:"max_iterations"`    // max ReAct steps per turn
+	MaxIterations    int      `mapstructure:"max_iterations"`    // max agent loop steps per turn
 	MaxHistory       int      `mapstructure:"max_history"`       // max stored messages per session
 	CompactThreshold int      `mapstructure:"compact_threshold"` // stored-history length past which older messages are summarized; 0 disables
 	CompactKeep      int      `mapstructure:"compact_keep"`      // most-recent messages kept verbatim when compacting
