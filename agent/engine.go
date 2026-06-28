@@ -18,7 +18,7 @@ const (
 	roleTool      = "tool"
 )
 
-// EngineConfig configures the ReAct engine.
+// EngineConfig configures the agentic tool-calling engine.
 type EngineConfig struct {
 	MaxIterations int
 	MaxHistory    int
@@ -59,7 +59,7 @@ const (
 	DecisionAlways
 )
 
-// Engine runs the Reasoning-and-Acting loop: it repeatedly asks the model what
+// Engine runs the agentic tool-calling loop: it repeatedly asks the model what
 // to do, executes any requested tool calls, and feeds the results back until the
 // model produces a final answer (or a dangerous action requires approval).
 type Engine struct {

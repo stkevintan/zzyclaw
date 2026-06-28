@@ -11,7 +11,7 @@ import (
 	"zzy/copilot"
 )
 
-// PendingApproval captures the state of a ReAct turn that is paused waiting for
+// PendingApproval captures the state of an agent turn that is paused waiting for
 // the user to approve (or deny) a dangerous tool call.
 type PendingApproval struct {
 	// Messages is the conversation built so far, including the assistant message
