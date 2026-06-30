@@ -13,8 +13,8 @@ import (
 func TestStructReminderRendersAndScopes(t *testing.T) {
 	mem := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()
-	mem.Upsert(ctx, "u1", CategoryPersonal, "prefers concise answers", "brevity")
-	mem.Upsert(ctx, "u1", CategoryProject, "wechat bot in go", "go 1.25")
+	mustUpsert(t, mem, ctx, "u1", CategoryPersonal, "prefers concise answers", "brevity")
+	mustUpsert(t, mem, ctx, "u1", CategoryProject, "wechat bot in go", "go 1.25")
 
 	e := &Engine{structMem: mem, structInject: 6}
 	sess := &Session{UserID: "u1"}
@@ -36,7 +36,7 @@ func TestStructReminderRendersAndScopes(t *testing.T) {
 
 func TestFullMessagesInsertsReminderBeforeLastUser(t *testing.T) {
 	mem := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
-	mem.Upsert(context.Background(), "u1", CategoryPersonal, "prefers go", "x")
+	mustUpsert(t, mem, context.Background(), "u1", CategoryPersonal, "prefers go", "x")
 	mgr, err := skill.NewManager(t.TempDir(), func(string) (string, error) { return t.TempDir(), nil })
 	if err != nil {
 		t.Fatalf("skill manager: %v", err)

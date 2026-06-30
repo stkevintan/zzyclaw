@@ -261,7 +261,7 @@ func (r *Reflector) consolidate(ctx context.Context, userID string, cat MemoryCa
 	}
 	drafts := make([]MemoDraft, 0, len(out.Items))
 	for _, it := range out.Items {
-		drafts = append(drafts, MemoDraft{Index: it.Index, Detail: it.Detail})
+		drafts = append(drafts, MemoDraft(it))
 	}
 	if err := r.mem.ReplaceCategory(ctx, userID, cat, drafts); err != nil {
 		slog.WarnContext(ctx, "memory consolidation failed", "category", cat, "error", err)

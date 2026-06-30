@@ -2,9 +2,19 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"strings"
+	"testing"
 )
+
+// mustUpsert stores a memory entry and fails the test on error.
+func mustUpsert(t *testing.T, m StructuralMemory, ctx context.Context, userID string, cat MemoryCategory, index, detail string) MemoEntry {
+	t.Helper()
+	e, err := m.Upsert(ctx, userID, cat, index, detail)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	return e
+}
 
 // fakeEmbedder is a deterministic, offline stand-in for the Copilot embeddings
 // API. It encodes a bag of hashed words, so cosine similarity reflects shared
@@ -29,11 +39,4 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 		out[i] = v
 	}
 	return out, nil
-}
-
-// errEmbedder always fails, to exercise the error paths.
-type errEmbedder struct{}
-
-func (errEmbedder) Embed(context.Context, []string) ([][]float32, error) {
-	return nil, fmt.Errorf("embed boom")
 }

@@ -66,7 +66,7 @@ func TestStructMemInjectPerCategory(t *testing.T) {
 func TestStructMemUserIsolation(t *testing.T) {
 	m := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
 	ctx := context.Background()
-	m.Upsert(ctx, "u1", CategoryPersonal, "secret", "x")
+	mustUpsert(t, m, ctx, "u1", CategoryPersonal, "secret", "x")
 	if all, _ := m.List(ctx, "u2"); len(all) != 0 {
 		t.Fatalf("u2 should not see u1 memory")
 	}
