@@ -37,13 +37,12 @@ type EngineConfig struct {
 	// Grants persists "always approve" decisions so repeated equivalent dangerous
 	// actions don't re-prompt. When nil, approvals are never remembered.
 	Grants GrantStore
-	// Memory is the long-term, per-user memory surfaced into the system prompt and
-	// exposed via the remember/recall/forget tools. When nil, long-term memory is
-	// disabled.
-	Memory UserMemory
-	// MemoryInject is the number of remembered facts injected into the system
-	// prompt each turn. <= 0 uses a small default.
-	MemoryInject int
+	// StructMem is the dynamic structural memory injected into a <system-reminder>
+	// and exposed via the remember/recall/forget tools. When nil, it is disabled.
+	StructMem StructuralMemory
+	// StructInject is the number of memory indexes injected per category each turn.
+	// <= 0 uses a small default.
+	StructInject int
 }
 
 // Decision is a user's response to an approval prompt for a dangerous action.
@@ -77,8 +76,8 @@ type Engine struct {
 	persona     string
 	grants      GrantStore
 
-	memory       UserMemory
-	memoryInject int
+	structMem    StructuralMemory
+	structInject int
 
 	// summarize condenses an older slice of messages into a compact note. It is
 	// a field so tests can inject a deterministic summarizer; by default it calls
@@ -125,9 +124,9 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 	if grants == nil {
 		grants = NewNoopGrantStore()
 	}
-	memoryInject := cfg.MemoryInject
-	if memoryInject <= 0 {
-		memoryInject = 8
+	structInject := cfg.StructInject
+	if structInject <= 0 {
+		structInject = structDefaultPerCat
 	}
 	e := &Engine{
 		client:      client,
@@ -143,8 +142,8 @@ func NewEngine(client *copilot.Client, toolReg *tools.Registry, skillReg *skill.
 		persona:     persona,
 		grants:      grants,
 
-		memory:       cfg.Memory,
-		memoryInject: memoryInject,
+		structMem:    cfg.StructMem,
+		structInject: structInject,
 	}
 	e.summarize = e.summarizeWithModel
 	return e
@@ -373,17 +372,72 @@ func (c toolCallsLog) LogValue() slog.Value {
 	return slog.StringValue(string(b))
 }
 
-// fullMessages prepends the dynamic system prompt to the conversation.
+// fullMessages prepends the dynamic system prompt and, when there is structural
+// memory, inserts a <system-reminder> message just before the latest user turn.
 func (e *Engine) fullMessages(ctx context.Context, sess *Session, messages []copilot.Message) []copilot.Message {
-	out := make([]copilot.Message, 0, len(messages)+1)
+	out := make([]copilot.Message, 0, len(messages)+2)
 	out = append(out, copilot.Message{Role: roleSystem, Content: e.systemPrompt(ctx, sess)})
-	out = append(out, messages...)
+	reminder := e.structReminder(ctx, sess, messages)
+	if reminder == "" {
+		return append(out, messages...)
+	}
+	rem := copilot.Message{Role: roleSystem, Content: reminder}
+	last := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == roleUser {
+			last = i
+			break
+		}
+	}
+	if last < 0 {
+		out = append(out, rem)
+		return append(out, messages...)
+	}
+	out = append(out, messages[:last]...)
+	out = append(out, rem)
+	out = append(out, messages[last:]...)
 	return out
 }
 
-// systemPrompt assembles the persona, the catalog of available skills, the
-// instructions of any skills currently loaded in the session, and any long-term
-// memory remembered for the active user.
+// structReminder renders the per-category memory indexes (relevant to the latest
+// user message) as a compact <system-reminder> block, or "" when none apply.
+func (e *Engine) structReminder(ctx context.Context, sess *Session, messages []copilot.Message) string {
+	if e.structMem == nil || sess == nil || sess.UserID == "" {
+		return ""
+	}
+	query := ""
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == roleUser {
+			query = messages[i].Content
+			break
+		}
+	}
+	entries, err := e.structMem.Inject(ctx, sess.UserID, query, e.structInject)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<system-reminder>\nPersistent memory about this user and their work (summaries; use recall with an id for full detail). Use it only when relevant; do not echo it back.\n")
+	for _, cat := range memoryCategories {
+		first := true
+		for _, en := range entries {
+			if en.Category != cat {
+				continue
+			}
+			if first {
+				fmt.Fprintf(&b, "## %s\n", cat.Label())
+				first = false
+			}
+			fmt.Fprintf(&b, "- [%s] %s\n", en.ID, en.Index)
+		}
+	}
+	b.WriteString("</system-reminder>")
+	return b.String()
+}
+
+// systemPrompt assembles the persona, the catalog of available skills, and the
+// instructions of any skills currently loaded in the session. Long-term memory
+// is injected separately as a <system-reminder> by fullMessages.
 func (e *Engine) systemPrompt(ctx context.Context, sess *Session) string {
 	var b strings.Builder
 	b.WriteString(e.persona)
@@ -402,18 +456,6 @@ func (e *Engine) systemPrompt(ctx context.Context, sess *Session) string {
 	if loaded := loadedSkillInstructions(e.skills, sess); len(loaded) > 0 {
 		b.WriteString("\n# Loaded skill instructions\n")
 		b.WriteString(strings.Join(loaded, "\n\n"))
-	}
-
-	if e.memory != nil && userID != "" {
-		facts, err := e.memory.Search(ctx, userID, "", e.memoryInject)
-		if err != nil {
-			slog.WarnContext(ctx, "failed to load long-term memory", "userID", userID, "error", err)
-		} else if len(facts) > 0 {
-			b.WriteString("\n\n# Long-term memory\nFacts you previously remembered about this user (use recall to search for more, forget to remove an outdated one):\n")
-			for _, f := range facts {
-				fmt.Fprintf(&b, "- %s\n", f.Text)
-			}
-		}
 	}
 	return b.String()
 }

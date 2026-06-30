@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"zzy/agent/skill"
+	"zzy/copilot"
 	"zzy/middlewares"
 
 	wechatbot "github.com/corespeed-io/wechatbot/golang"
@@ -17,19 +18,22 @@ import (
 type Middleware struct {
 	middlewares.BotClient
 
-	engine   *Engine
-	sessions *SessionManager
-	skills   *skill.Manager
-	router   *middlewares.CommandRouter
+	engine    *Engine
+	sessions  *SessionManager
+	skills    *skill.Manager
+	reflector *Reflector
+	router    *middlewares.CommandRouter
 }
 
-// NewMiddleware wires the agent middleware for a bot.
-func NewMiddleware(bot *wechatbot.Bot, engine *Engine, sessions *SessionManager, skills *skill.Manager) *Middleware {
+// NewMiddleware wires the agent middleware for a bot. reflector may be nil when
+// structural memory is disabled.
+func NewMiddleware(bot *wechatbot.Bot, engine *Engine, sessions *SessionManager, skills *skill.Manager, reflector *Reflector) *Middleware {
 	m := &Middleware{
 		BotClient: middlewares.BotClient{Bot: bot},
 		engine:    engine,
 		sessions:  sessions,
 		skills:    skills,
+		reflector: reflector,
 	}
 	m.router = m.buildRouter()
 	return m
@@ -68,6 +72,7 @@ func (m *Middleware) HandleMessage(ctx context.Context, msg *wechatbot.IncomingM
 			return true
 		}
 		outcome, err := m.engine.Resume(ctx, sess, decision)
+		m.scheduleReflection(sess, outcome, err)
 		m.respond(ctx, msg, outcome, err)
 		return true
 	}
@@ -77,8 +82,20 @@ func (m *Middleware) HandleMessage(ctx context.Context, msg *wechatbot.IncomingM
 	if err == nil && firstTurn {
 		m.sessions.UpdateTitle(ctx, msg.UserID, sess.ID, text)
 	}
+	m.scheduleReflection(sess, outcome, err)
 	m.respond(ctx, msg, outcome, err)
 	return true
+}
+
+// scheduleReflection arms idle structural-memory reflection on a completed turn.
+// It snapshots history under the held session lock so the background pass works
+// on a fork and never blocks the live conversation.
+func (m *Middleware) scheduleReflection(sess *Session, outcome Outcome, err error) {
+	if m.reflector == nil || err != nil || outcome.Suspended {
+		return
+	}
+	snapshot := append([]copilot.Message(nil), sess.History...)
+	m.reflector.Schedule(sess.UserID, sess.Key, snapshot)
 }
 
 // respond sends the outcome (or an error notice) back to the user.

@@ -52,6 +52,7 @@ Built-in tools registered in [main.go](main.go):
 | `http_get` | Fetch URLs; pre-trusted hosts are allowlisted, others are approval-gated and can be remembered |
 | `run_skill` | Execute a skill's code in the Deno sandbox (skills declaring `write`/`net` are approval-gated, per-call checked) |
 | `list_skills`, `load_skill`, `unload_skill`, `create_skill`, `delete_skill` | Skill management |
+| `remember`, `recall`, `forget` | Structural memory across four categories (when `memory_enabled`) |
 
 Key safety mechanics:
 
@@ -97,19 +98,25 @@ Key safety mechanics:
   messages stay verbatim, so long conversations retain context without growing
   unbounded. Users can also trigger it on demand with `/compact`
   ([agent/compact.go](agent/compact.go)).
-- **Long-term memory** — optional, per-user, and off by default
-  (`memory_enabled`). When on, the agent gets `remember`, `recall`, and
-  `forget` tools and a capped set of durable facts is injected into its system
-  prompt each turn (`memory_inject`). Facts are stored alongside conversation
-  history (Redis when configured, otherwise in-process) and are isolated per
-  user, so the agent can retain preferences and context across sessions
-  ([agent/usermemory.go](agent/usermemory.go),
-  [agent/memorytools.go](agent/memorytools.go)). Recall is **semantic**: each
-  fact is embedded once (via the Copilot embeddings API, `embedding_model`,
-  default `text-embedding-3-small`) and queries are ranked by cosine
-  similarity, so "what can't they eat?" surfaces "Allergic to peanuts" without
-  shared keywords. The `UserMemory` interface keeps the embedder pluggable
-  (e.g. a future mem0/vector-DB backend) without changing call sites.
+- **Dynamic structural memory** — optional, per-user, and off by default
+  (`memory_enabled`). Modeled on Claude-style reflective memory. When on, the
+  agent gets `remember`, `recall`, and `forget` tools, and only memory
+  *indexes* (short summaries) — not full detail — are injected into a
+  `<system-reminder>` placed just before the latest user message
+  (`memory_inject` per category). Notes are organized into four categories:
+  **personal** (characters/preferences/role), **feedback** (user choices), **project**
+  (current project info), and **reference** (anything reusable). After a quiet
+  period (`reflect_idle_seconds`, default 120s) the agent forks the session and
+  reflects on it, distilling concise, deduplicated notes; a content-hash
+  watermark avoids re-reflecting and conversations shorter than
+  `reflect_min_messages` are skipped. Detail is stored alongside conversation
+  history (Redis when configured, otherwise in-process), isolated per user
+  ([agent/structmem.go](agent/structmem.go), [agent/reflect.go](agent/reflect.go),
+  [agent/structmemtools.go](agent/structmemtools.go)). Recall and dedup are
+  **semantic**: indexes are embedded (`embedding_model`, default
+  `text-embedding-3-small`) and ranked by cosine similarity; near-duplicate
+  entries merge and per-category soft/hard caps (`memory_soft_cap`) prevent
+  explosion. The `StructuralMemory` interface keeps the embedder pluggable.
 
 ## 2. Skill management
 
