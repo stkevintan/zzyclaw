@@ -43,7 +43,7 @@ func main() {
 	)
 
 	// Assemble the general agent: memory store, skills, tools and the engine.
-	engine, sessions, skillMgr, err := buildAgent(ctx, cfg, githubToken)
+	engine, sessions, skillMgr, reflector, err := buildAgent(ctx, cfg, githubToken)
 	if err != nil {
 		slog.Error("failed to build agent", "error", err)
 		os.Exit(1)
@@ -57,7 +57,7 @@ func main() {
 			return []middlewares.Middleware{
 				&middlewares.LoggingMiddleware{},
 				resume.NewMiddleware(bot, copilotClient, locker),
-				agent.NewMiddleware(bot, engine, sessions, skillMgr),
+				agent.NewMiddleware(bot, engine, sessions, skillMgr, reflector),
 			}
 		},
 	)
@@ -87,13 +87,13 @@ func main() {
 // directories, with an optional shared on-disk skills directory), the built-in
 // tools (sandboxed filesystem + script runner + skill management) and the
 // agentic tool-calling engine.
-func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*agent.Engine, *agent.SessionManager, *skill.Manager, error) {
+func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*agent.Engine, *agent.SessionManager, *skill.Manager, *agent.Reflector, error) {
 	agentBase := filepath.Join(cfg.DataDir, "agent")
 	skillsDir := orDefault(cfg.Agent.SkillsDir, filepath.Join(agentBase, "skills"))
 	workspaceDir := orDefault(cfg.Agent.WorkspaceDir, filepath.Join(agentBase, "workspace"))
 	for _, d := range []string{skillsDir, workspaceDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
 
@@ -103,7 +103,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		rs, err := agent.NewRedisStore(ctx, cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB,
 			time.Duration(cfg.Redis.TTLSeconds)*time.Second)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		store = rs
 		slog.Info("agent memory: redis", "addr", cfg.Redis.Addr)
@@ -125,12 +125,12 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		return filepath.Join(ws, "skills"), nil
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	sandbox, err := tools.NewSandbox(workspaceDir, skillsDir)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	toolReg := tools.NewRegistry()
 	toolReg.Register(tools.NewReadFile(sandbox))
@@ -168,18 +168,28 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	// (persistent with Redis, process-local otherwise).
 	grants := agent.NewStoreGrantStore(store)
 
-	// Long-term, per-user memory (off by default). When enabled it shares the
-	// same store as conversation history and grants, exposes the
-	// remember/recall/forget tools, and is surfaced into the system prompt.
-	// Relevance is ranked by embedding the facts via the Copilot embeddings API.
-	var memory agent.UserMemory
+	// Dynamic structural memory (off by default). When enabled it shares the same
+	// store as conversation history and grants, exposes remember/recall/forget,
+	// and is injected as a <system-reminder>. An idle reflector forks the
+	// conversation, distills it into four categories, and dedups via embeddings.
+	var reflector *agent.Reflector
+	var structMem agent.StructuralMemory
 	if cfg.Agent.MemoryEnabled {
 		embedder := agent.NewCopilotEmbedder(agentClient, cfg.Agent.EmbeddingModel)
-		memory = agent.NewStoreUserMemory(store, embedder)
-		for _, t := range agent.MemoryTools(memory) {
+		structMem = agent.NewStoreStructuralMemory(store, embedder)
+		for _, t := range agent.StructuralMemoryTools(structMem) {
 			toolReg.Register(t)
 		}
-		slog.Info("long-term memory enabled")
+		reflectClient := agentClient
+		if cfg.Agent.ReflectModel != "" {
+			reflectClient = copilot.NewClient(githubToken, copilot.WithModel(cfg.Agent.ReflectModel))
+		}
+		reflector = agent.NewReflector(ctx, store, structMem, reflectClient, agent.ReflectorConfig{
+			IdleDelay:   time.Duration(cfg.Agent.ReflectIdleSeconds) * time.Second,
+			MinMessages: cfg.Agent.ReflectMinMessages,
+			SoftCap:     cfg.Agent.MemorySoftCap,
+		})
+		slog.Info("structural memory enabled")
 	}
 
 	engine := agent.NewEngine(agentClient, toolReg, skillMgr, store, agent.EngineConfig{
@@ -190,11 +200,11 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 		AutoApprove:      cfg.Agent.AutoApprove,
 		Owners:           cfg.Agent.Owners,
 		Grants:           grants,
-		Memory:           memory,
-		MemoryInject:     cfg.Agent.MemoryInject,
+		StructMem:        structMem,
+		StructInject:     cfg.Agent.MemoryInject,
 	})
 	sessions := agent.NewSessionManager(store)
-	return engine, sessions, skillMgr, nil
+	return engine, sessions, skillMgr, reflector, nil
 }
 
 func orDefault(v, def string) string {

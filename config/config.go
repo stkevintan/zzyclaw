@@ -44,9 +44,13 @@ type AgentConfig struct {
 	AutoApprove      []string `mapstructure:"auto_approve"`      // tool names that skip the approval prompt
 	Owners           []string `mapstructure:"owners"`            // user IDs allowed to run dangerous tools; empty disables the gate
 
-	MemoryEnabled  bool   `mapstructure:"memory_enabled"`  // enable long-term, per-user memory (remember/recall/forget tools + system-prompt injection)
-	MemoryInject   int    `mapstructure:"memory_inject"`   // number of remembered facts injected into the system prompt each turn; 0 uses a small default
-	EmbeddingModel string `mapstructure:"embedding_model"` // embedding model used to rank memory; empty uses the client default
+	MemoryEnabled      bool   `mapstructure:"memory_enabled"`       // enable dynamic structural memory (remember/recall/forget tools, <system-reminder> injection, idle reflection)
+	MemoryInject       int    `mapstructure:"memory_inject"`        // memory indexes injected per category each turn; 0 uses a small default
+	MemorySoftCap      int    `mapstructure:"memory_soft_cap"`      // per-category count past which a consolidation pass merges entries; 0 uses default
+	ReflectModel       string `mapstructure:"reflect_model"`        // model used for idle reflection; empty uses the agent model
+	ReflectIdleSeconds int    `mapstructure:"reflect_idle_seconds"` // quiet period after a turn before reflection runs; 0 uses default
+	ReflectMinMessages int    `mapstructure:"reflect_min_messages"` // skip reflection for conversations shorter than this; 0 uses default
+	EmbeddingModel     string `mapstructure:"embedding_model"`      // embedding model used to rank/dedup memory; empty uses the client default
 
 	ShellTimeoutSeconds int `mapstructure:"shell_timeout_seconds"` // max wall-clock per run_shell command
 
@@ -109,6 +113,10 @@ func loadFrom(configPaths ...string) (*Config, error) {
 	v.SetDefault("agent.network_allowlist", []string{})
 	v.SetDefault("agent.memory_enabled", false)
 	v.SetDefault("agent.memory_inject", 0)
+	v.SetDefault("agent.memory_soft_cap", 30)
+	v.SetDefault("agent.reflect_model", "")
+	v.SetDefault("agent.reflect_idle_seconds", 120)
+	v.SetDefault("agent.reflect_min_messages", 4)
 	v.SetDefault("agent.embedding_model", "")
 	v.SetDefault("agent.shell_timeout_seconds", 120)
 	v.SetDefault("agent.deno_path", "")
