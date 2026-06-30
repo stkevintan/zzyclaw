@@ -55,9 +55,10 @@ type ReflectorConfig struct {
 	SoftCap int
 }
 
-// Reflector watches sessions and, after they go idle, forks a read-only snapshot
-// of the conversation and distills it into structural memory. It never touches a
-// live session or holds its lock; the model call runs in the background.
+// Reflector watches sessions and, after they go idle, distills a read-only
+// snapshot of the conversation into structural memory. It never holds a live
+// session's lock: callers snapshot the history themselves, and the model call
+// runs on a background goroutine scoped to baseCtx.
 type Reflector struct {
 	store   Store
 	mem     StructuralMemory
@@ -110,8 +111,10 @@ func NewReflector(baseCtx context.Context, store Store, mem StructuralMemory, cl
 	return r
 }
 
-// Schedule (re)arms idle reflection for a session with the latest snapshot. Each
-// new turn pushes the timer back so reflection only fires once talk settles.
+// Schedule (re)arms idle reflection for a session with the latest snapshot.
+// It debounces: each new turn resets the per-session timer, so reflection fires
+// only once the conversation has been quiet for the idle delay. The first call
+// arms a time.AfterFunc; later calls reuse and Reset the same timer.
 func (r *Reflector) Schedule(userID, sessionKey string, history []copilot.Message) {
 	if r == nil || sessionKey == "" {
 		return
@@ -130,7 +133,8 @@ func (r *Reflector) Schedule(userID, sessionKey string, history []copilot.Messag
 	r.jobs[sessionKey] = job
 }
 
-// Stop cancels all pending timers.
+// Stop cancels all pending (not-yet-fired) timers. Reflections already running
+// are not interrupted here; cancel baseCtx to unwind those.
 func (r *Reflector) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -140,10 +144,21 @@ func (r *Reflector) Stop() {
 	}
 }
 
+// fire runs when a session's debounce timer elapses. It claims the job (moving
+// it from jobs to inflight so a concurrent Schedule can't double-run it) and
+// then reflects outside the lock.
 func (r *Reflector) fire(sessionKey string) {
 	r.mu.Lock()
 	job, ok := r.jobs[sessionKey]
-	if !ok || r.inflight[sessionKey] {
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	if r.inflight[sessionKey] {
+		// A previous reflection for this session is still running. Don't drop the
+		// job (that would orphan it in r.jobs with a spent timer and starve future
+		// reflections); re-arm the timer to retry once the in-flight pass finishes.
+		job.timer.Reset(r.idle)
 		r.mu.Unlock()
 		return
 	}
@@ -258,6 +273,9 @@ func (r *Reflector) extractWithModel(ctx context.Context, transcript, existing s
 	out, err := copilot.Parse[reflectionResult](ctx, r.client, reflectionSystemPrompt, content)
 	if err != nil {
 		return reflectionResult{}, err
+	}
+	if out == nil {
+		return reflectionResult{}, fmt.Errorf("reflector: parsed reflection result is nil")
 	}
 	return *out, nil
 }

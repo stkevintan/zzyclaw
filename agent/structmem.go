@@ -199,6 +199,9 @@ func (m *storeStructuralMemory) Upsert(ctx context.Context, userID string, cat M
 	if err != nil {
 		return MemoEntry{}, fmt.Errorf("structmem: embed: %w", err)
 	}
+	if len(vecs) == 0 {
+		return MemoEntry{}, fmt.Errorf("structmem: embed returned no vectors")
+	}
 	vec := vector(vecs[0])
 	now := time.Now().UTC()
 
@@ -249,7 +252,7 @@ func (m *storeStructuralMemory) Inject(ctx context.Context, userID, query string
 	var q []float32
 	if query = strings.TrimSpace(query); query != "" {
 		vecs, err := m.embedder.Embed(ctx, []string{query})
-		if err == nil {
+		if err == nil && len(vecs) > 0 {
 			q = vecs[0]
 		}
 	}
@@ -297,6 +300,9 @@ func (m *storeStructuralMemory) Search(ctx context.Context, userID, query string
 		vecs, err := m.embedder.Embed(ctx, []string{query})
 		if err != nil {
 			return nil, fmt.Errorf("structmem: embed query: %w", err)
+		}
+		if len(vecs) == 0 {
+			return nil, fmt.Errorf("structmem: embed query returned no vectors")
 		}
 		q = vecs[0]
 	}
@@ -413,6 +419,9 @@ func (m *storeStructuralMemory) ReplaceCategory(ctx context.Context, userID stri
 		v, err := m.embedder.Embed(ctx, texts)
 		if err != nil {
 			return fmt.Errorf("structmem: embed: %w", err)
+		}
+		if len(v) != len(texts) {
+			return fmt.Errorf("structmem: embed returned %d vectors, want %d", len(v), len(texts))
 		}
 		vecs = v
 	}
