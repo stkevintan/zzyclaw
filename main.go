@@ -140,7 +140,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	toolReg.Register(tools.NewDeletePath(sandbox))
 	toolReg.Register(tools.NewSearchFiles(sandbox, 30*time.Second))
 	toolReg.Register(tools.NewShell(sandbox, time.Duration(cfg.Agent.ShellTimeoutSeconds)*time.Second))
-	toolReg.Register(tools.NewHTTPGet(cfg.Agent.NetworkAllowlist, 30*time.Second))
+	toolReg.Register(tools.NewFetch(cfg.Agent.NetworkAllowlist, 30*time.Second))
 
 	// Sandboxed skills: their code runs inside the Deno sandbox. By default a
 	// skill gets read-only access to its own directory and the workspace and no
@@ -162,7 +162,7 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	agentClient := copilot.NewClient(githubToken, copilot.WithModel(agentModel))
 
 	// Persistent, per-user access-control store: remembers each user's "always
-	// approve" decisions (e.g. an http_get host or a workspace directory) so the
+	// approve" decisions (e.g. a fetch host or a workspace directory) so the
 	// agent doesn't re-prompt for the same scope. It reuses the shared store, so
 	// grants get the same durability as conversation memory and session indexes
 	// (persistent with Redis, process-local otherwise).

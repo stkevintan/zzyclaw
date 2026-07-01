@@ -1,24 +1,16 @@
-# zzy
+# zzyclaw
 
-A WeChat chat bot backed by an **agentic tool-calling AI agent**. Messages from WeChat are
-handled by an agentic loop that can use tools, manage its own
-skills, and run untrusted skill code inside a **Deno sandbox**. The model is
-served through the GitHub Copilot API.
-
-> Threat model: WeChat messages are untrusted input. The agent is designed so
-> that a prompt-injection attempt cannot escalate into arbitrary code execution
-> or data exfiltration — dangerous actions are owner-gated and require approval,
-> and skill code runs deny-by-default in a sandbox.
+An **agentic/reflective AI agent** bult from scratch. 
 
 ## Features
 
 - **Agentic loop** — multi-step reason → act → observe loop over a tool registry.
-- **Skill management** — self-contained, pluggable skills loaded at runtime:
+- **Reflective memory** — per-user *dynamic structural memory*: the
+  agent reflects on idle sessions, distills semantic structural notes into durable memory.
+- **Dynamic Skill** — self-contained, pluggable skills loaded at runtime:
   builtin, owner-shared, and isolated per user.
-- **Deno-based sandbox** — user-authored skill code executes in Deno with
+- **Deno-based Sandbox** — user-authored skill code executes in Deno with
   deny-by-default permissions (no env, no subprocess, no FFI, no remote imports).
-- **Pluggable memory** — Redis-backed conversation memory, or in-memory when no
-  Redis is configured.
 - **Approval gate** — powerful tools (shell, network, workspace writes) are
   owner-gated and pause the turn for an explicit yes/no.
 
@@ -33,13 +25,26 @@ dangerous action requires approval).
 
 ```mermaid
 flowchart LR
-    WeChat[WeChat message] --> MW[agent middleware]
-    MW --> Engine[Agentic engine]
+    WeChat[WeChat message] --> MW[Agent middleware]
+    MW --> Engine[Agentic engine<br/>reason → act → observe]
+
+    Engine -->|final answer| WeChat
+
+    Engine -->|dangerous?| Approval{Owner approval}
+    Approval -->|no| Engine
+    Approval -->|yes / remembered| Tools
+
+    Engine <-->|memory index<br/>+ reflection| Memory[(Per-user<br/>memory)]
+
     Engine -->|tool call| Tools[Tool registry]
     Tools -->|observation| Engine
-    Engine -->|dangerous?| Approval{Owner approval}
-    Approval -->|yes| Tools
-    Engine -->|final answer| WeChat
+
+    Tools --> FS[Filesystem<br/>read / write / edit]
+    Tools --> Shell[run_shell]
+    Tools --> HTTP[fetch]
+    Tools --> Skills[Skill mgmt<br/>+ run_skill]
+
+    Skills -->|executes code| Sandbox[Deno sandbox<br/>deny-by-default]
 ```
 
 Built-in tools registered in [main.go](main.go):
@@ -49,76 +54,59 @@ Built-in tools registered in [main.go](main.go):
 | `read_file`, `write_file`, `edit_file` | Structured file access within the sandboxed workspace |
 | `list_dir`, `search_files`, `delete_path` | Workspace inspection and cleanup |
 | `run_shell` | Build/run/lint/test commands (owner-gated, per-command checked) |
-| `http_get` | Fetch URLs; pre-trusted hosts are allowlisted, others are approval-gated and can be remembered |
+| `fetch` | HTTP(S) request (GET/POST/PATCH/DELETE) with optional body and headers; a GET to a pre-trusted host is allowlisted, other hosts and any state-changing method are approval-gated and can be remembered |
 | `run_skill` | Execute a skill's code in the Deno sandbox (skills declaring `write`/`net` are approval-gated, per-call checked) |
 | `list_skills`, `load_skill`, `unload_skill`, `create_skill`, `delete_skill` | Skill management |
 | `remember`, `recall`, `forget` | Structural memory across four categories (when `memory_enabled`) |
 
-Key safety mechanics:
+## 2. Reflective Memory
 
-- **Owner gating** — tools that report themselves as dangerous are only
-  approvable by configured `owners`. With no owners set the gate is disabled.
-- **Auto-approve allowlist** — low-risk tools can be added to `auto_approve`;
-  tools flagged "never auto-approve" (e.g. `run_shell`, `run_skill`) are still
-  evaluated per call, because the danger depends on the specific command or
-  skill rather than the tool name.
-- **Remembered approvals** — when prompted for a dangerous action you can reply
-  `yes` (allow once), `always` (allow and remember the scope), or `no`. `always`
-  decisions are stored **per user** in the shared store (Redis when configured,
-  otherwise process-local) so equivalent calls skip the prompt: `http_get` is
-  remembered per host (growing the allowlist on demand), file
-  writes/edits/deletes are remembered per directory, and `run_skill` is
-  remembered per skill **and** its declared `write`/`net` capabilities (so
-  widening a skill's access re-prompts). One user's grants never apply to
-  another.
-- **Workspace is writable by default** — file writes/edits/deletes inside the
-  agent **workspace root** are pre-approved and never prompt; the gate (and the
-  remembered-approval flow above) only applies to mutations outside it, such as
-  the skills directory.
-- **Per-user workspaces** — each user gets a private subdirectory of the
-  workspace root. Relative paths, the `run_shell` working directory and a
-  skill's workspace access are all confined to the calling user's own directory,
-  so one user can never read or write another user's files.
-- **Per-user skills** — every skill the agent authors at runtime lives in the
-  calling user's own skills directory (`<workspace>/<user>/skills`). Users can
-  only list, load, run, create or delete their own skills; one user can never
-  see or invoke another user's skill by name. The **builtin** skills (e.g.
-  `write-skill`) are compiled into the binary and served from memory, visible to
-  everyone and impossible for a user to overwrite or delete
-  ([agent/skill/manager.go](agent/skill/manager.go)).
-- **Shared skills** — owners (`agent.owners`) can publish a skill to the shared
-  on-disk registry (`create_skill` with `shared: true`), making it visible to
-  and runnable by every user. When no owners are configured the gate is disabled
-  and any user may manage shared skills, mirroring the dangerous-tool owner gate.
-- **Bounded loops** — `max_iterations` caps reasoning steps per turn and
-  `max_history` caps stored messages per session.
-- **Conversation compaction** — once a session's stored history exceeds
-  `compact_threshold` messages, the older turns are summarized into a compact
-  note kept at the head of the history while the most recent `compact_keep`
-  messages stay verbatim, so long conversations retain context without growing
-  unbounded. Users can also trigger it on demand with `/compact`
-  ([agent/compact.go](agent/compact.go)).
-- **Dynamic structural memory** — optional, per-user, and off by default
-  (`memory_enabled`). Modeled on Claude-style reflective memory. When on, the
-  agent gets `remember`, `recall`, and `forget` tools, and only memory
-  *indexes* (short summaries) — not full detail — are injected into a
-  `<system-reminder>` placed just before the latest user message
-  (`memory_inject` per category). Notes are organized into four categories:
-  **personal** (characters/preferences/role), **feedback** (user choices), **project**
-  (current project info), and **reference** (anything reusable). After a quiet
-  period (`reflect_idle_seconds`, default 120s) the agent forks the session and
-  reflects on it, distilling concise, deduplicated notes; a content-hash
-  watermark avoids re-reflecting and conversations shorter than
-  `reflect_min_messages` are skipped. Detail is stored alongside conversation
-  history (Redis when configured, otherwise in-process), isolated per user
-  ([agent/structmem.go](agent/structmem.go), [agent/reflect.go](agent/reflect.go),
-  [agent/structmemtools.go](agent/structmemtools.go)). Recall and dedup are
-  **semantic**: indexes are embedded (`embedding_model`, default
-  `text-embedding-3-small`) and ranked by cosine similarity; near-duplicate
-  entries merge and per-category soft/hard caps (`memory_soft_cap`) prevent
-  explosion. The `StructuralMemory` interface keeps the embedder pluggable.
+Optional, per-user, and off by default (`memory_enabled`), the agent keeps a
+*dynamic structural memory* modeled on Claude-style reflective memory. When on,
+the agent gets `remember`, `recall`, and `forget` tools, and only memory
+*indexes* (short summaries) — never full detail — are injected into a
+`<system-reminder>` placed just before the latest user message
+([agent/structmem.go](agent/structmem.go),
+[agent/structmemtools.go](agent/structmemtools.go)).
 
-## 2. Skill management
+Notes are organized into four fixed categories:
+
+| Category | Holds |
+| --- | --- |
+| `personal` | The user's character, preferences, role and style |
+| `feedback` | Explicit choices, corrections and feedback the user gave |
+| `project` | Facts about the current project the work concerns |
+| `reference` | Anything else reusable across conversations |
+
+After a quiet period (`reflect_idle_seconds`, default 120s) the agent **forks**
+the session and reflects on it out-of-band, distilling concise, deduplicated
+notes without disturbing the live turn. A content-hash watermark avoids
+re-reflecting the same history, and conversations shorter than
+`reflect_min_messages` (default 4) are skipped
+([agent/reflect.go](agent/reflect.go)).
+
+```mermaid
+flowchart LR
+    Turn[User turn] --> Idle{Idle ≥ reflect_idle_seconds?}
+    Idle -->|no| Turn
+    Idle -->|yes| Fork[Fork session &amp; reflect]
+    Fork --> Distill[Distill + dedup notes<br/>into 4 categories]
+    Distill --> Store[(Per-user memory)]
+    Store -->|inject indexes only| Reminder[&lt;system-reminder&gt;]
+    Reminder --> Turn
+```
+
+Recall and dedup are **semantic**: indexes are embedded (`embedding_model`,
+default `text-embedding-3-small`) and ranked by cosine similarity, so `recall`
+returns the most relevant notes rather than the most recent. `memory_inject`
+caps how many indexes per category enter context each turn; near-duplicate
+entries merge, and a per-category soft cap (`memory_soft_cap`, default 30)
+triggers a consolidation pass so memory can't grow unbounded. Detail is stored
+alongside conversation history (Redis when configured, otherwise in-process) and
+is **isolated per user** — one user's memory is never visible to another. The
+`StructuralMemory` interface keeps the embedder pluggable.
+
+## 3. Dynamic Skill Management
 
 A **skill** is a self-contained directory, each containing
 a `SKILL.md` file with YAML-ish frontmatter (name, description, and optional
@@ -173,7 +161,7 @@ System-seeded skills (e.g. `write-skill`) are marked **builtin** from a
 compiled-in allowlist — never from frontmatter — so an untrusted skill cannot
 claim builtin status, and builtin skills cannot be overwritten or deleted.
 
-## 3. Deno-based sandbox
+## 4. Deno-based Sandbox
 
 User-authored skill code never runs in the host process. Instead it executes
 out-of-process in Deno, which is **deny-by-default**: the guest gets only the
@@ -242,7 +230,7 @@ Notable options ([config.example.toml](config.example.toml)):
 | `copilot.model` | Model used for inference (e.g. `gpt-4o`) |
 | `agent.owners` | User IDs allowed to approve dangerous tools |
 | `agent.auto_approve` | Tools that skip the approval prompt |
-| `agent.network_allowlist` | Hosts `http_get` reaches without prompting (others are asked once, then remembered if approved with `always`) |
+| `agent.network_allowlist` | Hosts `fetch` GETs without prompting (other hosts, and any POST/PATCH/DELETE, are asked once, then remembered if approved with `always`) |
 | `agent.skills_dir` / `agent.workspace_dir` | Skill and workspace roots |
 | `agent.deno_path` | Path to the Deno binary (empty = look up on `PATH`) |
 | `agent.skill_timeout_seconds` | Wall-clock budget per sandboxed skill run |

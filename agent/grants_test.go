@@ -9,18 +9,18 @@ func TestStoreGrantStorePerUserIsolation(t *testing.T) {
 	ctx := context.Background()
 	s := NewStoreGrantStore(NewInMemoryStore())
 
-	if err := s.Grant(ctx, "alice", "http_get:example.com"); err != nil {
+	if err := s.Grant(ctx, "alice", "fetch:GET:example.com"); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if !s.Allowed(ctx, "alice", "http_get:example.com") {
+	if !s.Allowed(ctx, "alice", "fetch:GET:example.com") {
 		t.Fatal("alice's grant should be allowed for alice")
 	}
 	// A different user must not inherit alice's grant.
-	if s.Allowed(ctx, "bob", "http_get:example.com") {
+	if s.Allowed(ctx, "bob", "fetch:GET:example.com") {
 		t.Fatal("bob must not see alice's grant")
 	}
 	// Unrelated key for the same user is not allowed.
-	if s.Allowed(ctx, "alice", "http_get:other.com") {
+	if s.Allowed(ctx, "alice", "fetch:GET:other.com") {
 		t.Fatal("unrelated key must not be allowed")
 	}
 }
@@ -46,11 +46,11 @@ func TestStoreGrantStoreGrantIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := NewStoreGrantStore(NewInMemoryStore())
 	for i := 0; i < 3; i++ {
-		if err := s.Grant(ctx, "alice", "http_get:example.com"); err != nil {
+		if err := s.Grant(ctx, "alice", "fetch:GET:example.com"); err != nil {
 			t.Fatalf("grant %d: %v", i, err)
 		}
 	}
-	if !s.Allowed(ctx, "alice", "http_get:example.com") {
+	if !s.Allowed(ctx, "alice", "fetch:GET:example.com") {
 		t.Fatal("grant should be allowed after repeated grants")
 	}
 }
