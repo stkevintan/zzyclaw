@@ -169,6 +169,9 @@ func NewFallbackSemantics(strategies ...MemoSemantics) MemoSemantics {
 func (s fallbackSemantics) Dedup(ctx context.Context, note string, candidates []RankItem) (int, []float32, error) {
 	var lastErr error = errors.New("no strategies configured")
 	for _, st := range s.strategies {
+		if err := ctx.Err(); err != nil {
+			return -1, nil, err
+		}
 		match, vec, err := st.Dedup(ctx, note, candidates)
 		if err == nil {
 			return match, vec, nil
@@ -181,6 +184,9 @@ func (s fallbackSemantics) Dedup(ctx context.Context, note string, candidates []
 func (s fallbackSemantics) Rank(ctx context.Context, query string, candidates []RankItem, n int) ([]int, error) {
 	var lastErr error = errors.New("no strategies configured")
 	for _, st := range s.strategies {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		order, err := st.Rank(ctx, query, candidates, n)
 		if err == nil {
 			return order, nil
