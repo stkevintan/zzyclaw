@@ -58,7 +58,7 @@ func TestEnvBindsAgentScalars(t *testing.T) {
 // TestEnvBindsAgentSlices guards that the []string agent keys bind from env as
 // comma-separated lists via viper's default StringToSlice decode hook.
 func TestEnvBindsAgentSlices(t *testing.T) {
-	t.Setenv("ZZY_AGENT_AUTO_APPROVE", "http_get,run_shell")
+	t.Setenv("ZZY_AGENT_AUTO_APPROVE", "fetch,run_shell")
 	t.Setenv("ZZY_AGENT_OWNERS", "alice,bob")
 	t.Setenv("ZZY_AGENT_NETWORK_ALLOWLIST", "example.com,*.github.com")
 
@@ -69,7 +69,7 @@ func TestEnvBindsAgentSlices(t *testing.T) {
 			t.Errorf("%s = %v, want %v", name, got, want)
 		}
 	}
-	wantEq("AutoApprove", cfg.Agent.AutoApprove, []string{"http_get", "run_shell"})
+	wantEq("AutoApprove", cfg.Agent.AutoApprove, []string{"fetch", "run_shell"})
 	wantEq("Owners", cfg.Agent.Owners, []string{"alice", "bob"})
 	wantEq("NetworkAllowlist", cfg.Agent.NetworkAllowlist, []string{"example.com", "*.github.com"})
 }
