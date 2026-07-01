@@ -1,15 +1,15 @@
 # zzyclaw
 
-An **agentic/reflective AI agent** bult from scratch. 
+An **agentic/reflective AI agent** built from scratch. 
 
 ## Features
 
 - **Agentic loop** — multi-step reason → act → observe loop over a tool registry.
 - **Reflective memory** — per-user *dynamic structural memory*: the
   agent reflects on idle sessions, distills semantic structural notes into durable memory.
-- **Dynamic Skill** — self-contained, pluggable skills loaded at runtime:
+- **Dynamic skills** — self-contained, pluggable skills loaded at runtime:
   builtin, owner-shared, and isolated per user.
-- **Deno-based Sandbox** — user-authored skill code executes in Deno with
+- **Deno-based sandbox** — user-authored skill code executes in Deno with
   deny-by-default permissions (no env, no subprocess, no FFI, no remote imports).
 - **Approval gate** — powerful tools (shell, network, workspace writes) are
   owner-gated and pause the turn for an explicit yes/no.
@@ -57,13 +57,13 @@ Built-in tools registered in [main.go](main.go):
 | `fetch` | HTTP(S) request (GET/POST/PATCH/DELETE) with optional body and headers; a GET to a pre-trusted host is allowlisted, other hosts and any state-changing method are approval-gated and can be remembered |
 | `run_skill` | Execute a skill's code in the Deno sandbox (skills declaring `write`/`net` are approval-gated, per-call checked) |
 | `list_skills`, `load_skill`, `unload_skill`, `create_skill`, `delete_skill` | Skill management |
-| `remember`, `recall`, `forget` | Structural memory across four categories (when `memory_enabled`) |
+| `remember`, `recall`, `forget` | Structural memory across four categories |
 
 ## 2. Reflective Memory
 
-Optional, per-user, and off by default (`memory_enabled`), the agent keeps a
-*dynamic structural memory* modeled on Claude-style reflective memory. When on,
-the agent gets `remember`, `recall`, and `forget` tools, and only memory
+Per-user, the agent keeps a
+*dynamic structural memory* modeled on Claude-style reflective memory. The
+agent gets `remember`, `recall`, and `forget` tools, and only memory
 *indexes* (short summaries) — never full detail — are injected into a
 `<system-reminder>` placed just before the latest user message
 ([agent/structmem.go](agent/structmem.go),
@@ -104,7 +104,13 @@ entries merge, and a per-category soft cap (`memory_soft_cap`, default 30)
 triggers a consolidation pass so memory can't grow unbounded. Detail is stored
 alongside conversation history (Redis when configured, otherwise in-process) and
 is **isolated per user** — one user's memory is never visible to another. The
-`StructuralMemory` interface keeps the embedder pluggable.
+alongside conversation history (Redis when configured, otherwise in-process) and
+is **isolated per user** — one user's memory is never visible to another. The
+store depends only on a `MemoSemantics` interface (vectorize / dedup / rank), so
+the embedding and LLM strategies are interchangeable behind it, and memory
+tolerates a missing or unavailable embedding model: when embeddings are down, a
+small LLM takes over both dedup and relevance ranking (ranking only for oversized
+categories), so `remember`, `recall`, and reflection keep working.
 
 ## 3. Dynamic Skill Management
 

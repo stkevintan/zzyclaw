@@ -11,7 +11,7 @@ import (
 )
 
 func TestStructReminderRendersAndScopes(t *testing.T) {
-	mem := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	mem := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	ctx := context.Background()
 	mustUpsert(t, mem, ctx, "u1", CategoryPersonal, "prefers concise answers", "brevity")
 	mustUpsert(t, mem, ctx, "u1", CategoryProject, "wechat bot in go", "go 1.25")
@@ -35,7 +35,7 @@ func TestStructReminderRendersAndScopes(t *testing.T) {
 }
 
 func TestFullMessagesInsertsReminderBeforeLastUser(t *testing.T) {
-	mem := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	mem := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	mustUpsert(t, mem, context.Background(), "u1", CategoryPersonal, "prefers go", "x")
 	mgr, err := skill.NewManager(t.TempDir(), func(string) (string, error) { return t.TempDir(), nil })
 	if err != nil {

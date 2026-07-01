@@ -438,7 +438,7 @@ func (e *Engine) structReminder(ctx context.Context, sess *Session, messages []c
 // systemPrompt assembles the persona, the catalog of available skills, and the
 // instructions of any skills currently loaded in the session. Long-term memory
 // is injected separately as a <system-reminder> by fullMessages.
-func (e *Engine) systemPrompt(ctx context.Context, sess *Session) string {
+func (e *Engine) systemPrompt(_ context.Context, sess *Session) string {
 	var b strings.Builder
 	b.WriteString(e.persona)
 

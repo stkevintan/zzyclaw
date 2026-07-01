@@ -24,20 +24,19 @@ workspace_dir = ""    # defaults to <data_dir>/agent/workspace
 auto_approve = []     # tool names that skip the approval prompt, e.g. ["read_file"]
 owners = []           # user IDs allowed to run dangerous tools (e.g. run_shell); empty disables the gate
 
-# Dynamic structural memory (off by default). When enabled the agent gets the
+# Dynamic structural memory. The agent gets the
 # remember/recall/forget tools, and a compact set of memory *indexes* (short
 # summaries) is injected into a <system-reminder> before each turn. Full detail
 # is stored in the same place as conversation history (Redis when configured,
 # otherwise in-process) and is fully isolated per user. Memory is organized into
 # four categories: personal, feedback, project, reference. On idle, the agent
 # forks the session and reflects on it to distill concise, deduplicated notes.
-memory_enabled = false                       # enable structural memory
 memory_inject = 6                            # indexes injected per category each turn; 0 => default
 memory_soft_cap = 30                         # per-category count that triggers a consolidation/merge pass; 0 => default
 reflect_model = ""                           # model for idle reflection; empty => agent model
 reflect_idle_seconds = 120                   # quiet period after a turn before reflection runs
 reflect_min_messages = 4                     # skip reflection for shorter conversations
-embedding_model = "text-embedding-3-small"   # model used to embed/dedup/rank memory; empty => client default
+embedding_model = "text-embedding-3-small"   # embeddings for memory dedup/ranking; empty => skip embeddings and use the LLM (reflect_model) instead
 
 shell_timeout_seconds = 120  # max wall-clock per run_shell command (builds/tests)
 

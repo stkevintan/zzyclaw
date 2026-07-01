@@ -113,8 +113,8 @@ type StructuralMemory interface {
 }
 
 type storeStructuralMemory struct {
-	store    Store
-	embedder Embedder
+	store Store
+	sem   MemoSemantics
 
 	mu    sync.Mutex
 	cache map[string]*structMemEntry
@@ -126,11 +126,12 @@ type structMemEntry struct {
 	memos  []storedMemo
 }
 
-// NewStoreStructuralMemory returns structural memory backed by store and
-// embedder, mirroring how conversation history and grants persist (Redis in
-// production, in-memory in dev).
-func NewStoreStructuralMemory(store Store, embedder Embedder) StructuralMemory {
-	return &storeStructuralMemory{store: store, embedder: embedder, cache: make(map[string]*structMemEntry)}
+// NewStoreStructuralMemory returns structural memory backed by store and sem,
+// mirroring how conversation history and grants persist (Redis in production,
+// in-memory in dev). All embedding/LLM behavior lives behind sem, so the store
+// itself never depends on a concrete embedder.
+func NewStoreStructuralMemory(store Store, sem MemoSemantics) StructuralMemory {
+	return &storeStructuralMemory{store: store, sem: sem, cache: make(map[string]*structMemEntry)}
 }
 
 func structMemKey(userID string) string { return "structmem:" + userID }
@@ -193,37 +194,50 @@ func (m *storeStructuralMemory) Upsert(ctx context.Context, userID string, cat M
 		detail = index
 	}
 
-	// Embed before locking: it doesn't depend on stored state. We embed the
-	// index (the summary) so merge keys on meaning, not detail wording.
-	vecs, err := m.embedder.Embed(ctx, []string{index})
-	if err != nil {
-		return MemoEntry{}, fmt.Errorf("structmem: embed: %w", err)
-	}
-	if len(vecs) == 0 {
-		return MemoEntry{}, fmt.Errorf("structmem: embed returned no vectors")
-	}
-	vec := vector(vecs[0])
-	now := time.Now().UTC()
-
+	// Phase 1: snapshot the same-category candidates (with their ids) under the
+	// lock, then release it — Dedup may embed or call the model, and the per-user
+	// lock must never be held across that I/O.
 	e := m.entry(userID)
+	e.mu.Lock()
+	m.ensureLoaded(ctx, userID, e)
+	var candID []string
+	cands := make([]RankItem, 0)
+	for _, sm := range e.memos {
+		if sm.Category == cat {
+			candID = append(candID, sm.ID)
+			cands = append(cands, RankItem{Index: sm.Index, Vec: sm.Vec})
+		}
+	}
+	e.mu.Unlock()
+
+	// Phase 2: decide the merge target and get the vector to persist. Dedup
+	// encapsulates the strategy (embedding cosine or a small LLM), so Upsert never
+	// embeds or compares vectors itself.
+	match, rawVec, _ := m.sem.Dedup(ctx, index, cands)
+	vec := vector(rawVec)
+	var mergeID string
+	if match >= 0 && match < len(candID) {
+		mergeID = candID[match]
+	}
+
+	// Phase 3: apply under the lock, resolving the merge target by id so a
+	// concurrent write between the phases can't corrupt the result.
+	now := time.Now().UTC()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	m.ensureLoaded(ctx, userID, e)
-
 	next := append([]storedMemo(nil), e.memos...)
-
-	// Merge into the most-similar same-category entry above the threshold.
-	best, bestScore := -1, float32(0)
-	for i := range next {
-		if next[i].Category != cat {
-			continue
-		}
-		if s := cosine(vec, next[i].Vec); s > bestScore {
-			best, bestScore = i, s
+	best := -1
+	if mergeID != "" {
+		for i := range next {
+			if next[i].ID == mergeID {
+				best = i
+				break
+			}
 		}
 	}
 	var result MemoEntry
-	if best >= 0 && bestScore >= structMergeThreshold {
+	if best >= 0 {
 		next[best].Index = index
 		next[best].Detail = detail
 		next[best].UpdatedAt = now
@@ -249,43 +263,90 @@ func (m *storeStructuralMemory) Inject(ctx context.Context, userID, query string
 	if perCategory <= 0 {
 		perCategory = structDefaultPerCat
 	}
-	var q []float32
-	if query = strings.TrimSpace(query); query != "" {
-		vecs, err := m.embedder.Embed(ctx, []string{query})
-		if err == nil && len(vecs) > 0 {
-			q = vecs[0]
-		}
-	}
+	// Snapshot each category (recency-ordered) under the lock, then release it
+	// before any ranker call so the user's memory lock is never held across a
+	// network request (embedding or LLM).
 	e := m.entry(userID)
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	m.ensureLoaded(ctx, userID, e)
+	groups := make(map[MemoryCategory][]storedMemo, len(memoryCategories))
+	for _, sm := range e.memos {
+		groups[sm.Category] = append(groups[sm.Category], sm)
+	}
+	e.mu.Unlock()
+	for cat := range groups {
+		sortByRecency(groups[cat])
+	}
+
+	// Feedback and reference can be large, so rank them by relevance to the turn
+	// and keep the top few; personal and project are stable context kept by
+	// recency. Rank both relevance buckets in one call so the query is embedded
+	// once, then fill each category's quota from the shared ranking.
+	rel := append(append([]storedMemo(nil), groups[CategoryFeedback]...), groups[CategoryReference]...)
+	ranked := m.rankItems(ctx, query, rel, 2*perCategory)
+	picks := make(map[MemoryCategory][]MemoEntry, len(memoryCategories))
+	for _, sm := range ranked {
+		if len(picks[sm.Category]) < perCategory {
+			picks[sm.Category] = append(picks[sm.Category], sm.MemoEntry)
+		}
+	}
+	for _, cat := range []MemoryCategory{CategoryPersonal, CategoryProject} {
+		picks[cat] = topEntries(groups[cat], perCategory)
+	}
 
 	var out []MemoEntry
 	for _, cat := range memoryCategories {
-		group := make([]storedMemo, 0)
-		for _, sm := range e.memos {
-			if sm.Category == cat {
-				group = append(group, sm)
-			}
-		}
-		// Personal/project are stable context: keep them by recency. Feedback and
-		// reference can be many, so keep only the ones relevant to the turn.
-		byRelevance := q != nil && (cat == CategoryFeedback || cat == CategoryReference)
-		sort.SliceStable(group, func(i, j int) bool {
-			if byRelevance {
-				si, sj := cosine(q, group[i].Vec), cosine(q, group[j].Vec)
-				if si != sj {
-					return si > sj
-				}
-			}
-			return group[i].UpdatedAt.After(group[j].UpdatedAt)
-		})
-		for i := 0; i < len(group) && i < perCategory; i++ {
-			out = append(out, group[i].MemoEntry)
-		}
+		out = append(out, picks[cat]...)
 	}
 	return out, nil
+}
+
+// rankItems reorders group best-first by relevance to query using the configured
+// ranker, keeping recency for entries the ranker omits so nothing is ever
+// dropped. It returns group unchanged when there is no ranker, no query, or the
+// ranker declines. group is assumed to already be in recency order.
+func (m *storeStructuralMemory) rankItems(ctx context.Context, query string, group []storedMemo, keep int) []storedMemo {
+	if m.sem == nil || strings.TrimSpace(query) == "" || len(group) == 0 {
+		return group
+	}
+	cands := make([]RankItem, len(group))
+	for i, sm := range group {
+		cands[i] = RankItem{Index: sm.Index, Vec: sm.Vec}
+	}
+	order, err := m.sem.Rank(ctx, query, cands, keep)
+	if err != nil || len(order) == 0 {
+		return group
+	}
+	out := make([]storedMemo, 0, len(group))
+	seen := make(map[int]bool, len(group))
+	for _, idx := range order {
+		if idx >= 0 && idx < len(group) && !seen[idx] {
+			seen[idx] = true
+			out = append(out, group[idx])
+		}
+	}
+	for i, sm := range group {
+		if !seen[i] {
+			out = append(out, sm)
+		}
+	}
+	return out
+}
+
+// sortByRecency orders memos most-recently-updated first, in place.
+func sortByRecency(memos []storedMemo) {
+	sort.SliceStable(memos, func(i, j int) bool {
+		return memos[i].UpdatedAt.After(memos[j].UpdatedAt)
+	})
+}
+
+// topEntries returns up to n entries from a slice as MemoEntry values.
+func topEntries(memos []storedMemo, n int) []MemoEntry {
+	out := make([]MemoEntry, 0, n)
+	for i := 0; i < len(memos) && i < n; i++ {
+		out = append(out, memos[i].MemoEntry)
+	}
+	return out
 }
 
 func (m *storeStructuralMemory) Search(ctx context.Context, userID, query string, limit int) ([]MemoEntry, error) {
@@ -295,37 +356,16 @@ func (m *storeStructuralMemory) Search(ctx context.Context, userID, query string
 	if limit <= 0 {
 		limit = 5
 	}
-	var q []float32
-	if query = strings.TrimSpace(query); query != "" {
-		vecs, err := m.embedder.Embed(ctx, []string{query})
-		if err != nil {
-			return nil, fmt.Errorf("structmem: embed query: %w", err)
-		}
-		if len(vecs) == 0 {
-			return nil, fmt.Errorf("structmem: embed query returned no vectors")
-		}
-		q = vecs[0]
-	}
+	// Snapshot under the lock, then release before ranking.
 	e := m.entry(userID)
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	m.ensureLoaded(ctx, userID, e)
-
 	memos := append([]storedMemo(nil), e.memos...)
-	sort.SliceStable(memos, func(i, j int) bool {
-		if q != nil {
-			si, sj := cosine(q, memos[i].Vec), cosine(q, memos[j].Vec)
-			if si != sj {
-				return si > sj
-			}
-		}
-		return memos[i].UpdatedAt.After(memos[j].UpdatedAt)
-	})
-	out := make([]MemoEntry, 0, limit)
-	for i := 0; i < len(memos) && i < limit; i++ {
-		out = append(out, memos[i].MemoEntry)
-	}
-	return out, nil
+	e.mu.Unlock()
+
+	sortByRecency(memos)
+	memos = m.rankItems(ctx, query, memos, limit)
+	return topEntries(memos, limit), nil
 }
 
 func (m *storeStructuralMemory) List(ctx context.Context, userID string) ([]MemoEntry, error) {
@@ -400,7 +440,6 @@ func (m *storeStructuralMemory) ReplaceCategory(ctx context.Context, userID stri
 	if !cat.Valid() {
 		return fmt.Errorf("structmem: invalid category %q", cat)
 	}
-	texts := make([]string, 0, len(items))
 	clean := make([]MemoDraft, 0, len(items))
 	for _, it := range items {
 		idx := clipRunes(strings.TrimSpace(it.Index), structIndexMaxRunes)
@@ -412,18 +451,15 @@ func (m *storeStructuralMemory) ReplaceCategory(ctx context.Context, userID stri
 			det = idx
 		}
 		clean = append(clean, MemoDraft{Index: idx, Detail: det})
-		texts = append(texts, idx+"\n"+det)
 	}
-	var vecs [][]float32
-	if len(texts) > 0 {
-		v, err := m.embedder.Embed(ctx, texts)
-		if err != nil {
-			return fmt.Errorf("structmem: embed: %w", err)
+	// Embed each draft's index (via Dedup with no candidates) before locking, so
+	// recall can rank consolidated entries. Nil vectors when embeddings are
+	// unavailable — Dedup degrades rather than failing.
+	vecs := make([]vector, len(clean))
+	for i, d := range clean {
+		if _, v, _ := m.sem.Dedup(ctx, d.Index, nil); len(v) > 0 {
+			vecs[i] = vector(v)
 		}
-		if len(v) != len(texts) {
-			return fmt.Errorf("structmem: embed returned %d vectors, want %d", len(v), len(texts))
-		}
-		vecs = v
 	}
 	now := time.Now().UTC()
 	e := m.entry(userID)
@@ -439,7 +475,7 @@ func (m *storeStructuralMemory) ReplaceCategory(ctx context.Context, userID stri
 	for i, d := range clean {
 		next = append(next, storedMemo{
 			MemoEntry: MemoEntry{ID: newID(), Category: cat, Index: d.Index, Detail: d.Detail, CreatedAt: now, UpdatedAt: now},
-			Vec:       vector(vecs[i]),
+			Vec:       vecs[i],
 		})
 	}
 	if err := m.persist(ctx, userID, next); err != nil {

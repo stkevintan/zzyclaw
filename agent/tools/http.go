@@ -214,7 +214,11 @@ func (p *fetchPolicy) do(ctx context.Context, method, rawURL, body string, heade
 		return nil, err
 	}
 	for k, v := range headers {
-		req.Header.Set(k, v)
+		if strings.EqualFold(k, "Host") {
+			req.Host = v
+		} else {
+			req.Header.Set(k, v)
+		}
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {

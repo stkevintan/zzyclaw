@@ -168,29 +168,39 @@ func buildAgent(ctx context.Context, cfg *config.Config, githubToken string) (*a
 	// (persistent with Redis, process-local otherwise).
 	grants := agent.NewStoreGrantStore(store)
 
-	// Dynamic structural memory (off by default). When enabled it shares the same
-	// store as conversation history and grants, exposes remember/recall/forget,
-	// and is injected as a <system-reminder>. An idle reflector forks the
-	// conversation, distills it into four categories, and dedups via embeddings.
-	var reflector *agent.Reflector
-	var structMem agent.StructuralMemory
-	if cfg.Agent.MemoryEnabled {
-		embedder := agent.NewCopilotEmbedder(agentClient, cfg.Agent.EmbeddingModel)
-		structMem = agent.NewStoreStructuralMemory(store, embedder)
-		for _, t := range agent.StructuralMemoryTools(structMem) {
-			toolReg.Register(t)
-		}
-		reflectClient := agentClient
-		if cfg.Agent.ReflectModel != "" {
-			reflectClient = copilot.NewClient(githubToken, copilot.WithModel(cfg.Agent.ReflectModel))
-		}
-		reflector = agent.NewReflector(ctx, store, structMem, reflectClient, agent.ReflectorConfig{
-			IdleDelay:   time.Duration(cfg.Agent.ReflectIdleSeconds) * time.Second,
-			MinMessages: cfg.Agent.ReflectMinMessages,
-			SoftCap:     cfg.Agent.MemorySoftCap,
-		})
-		slog.Info("structural memory enabled")
+	// Dynamic structural memory (always on). It shares the same store as
+	// conversation history and grants, exposes remember/recall/forget, and is
+	// injected as a <system-reminder>. An idle reflector forks the conversation
+	// and distills it into four categories.
+	//
+	// The reflection/consolidation model also powers the LLM dedup/ranking; it
+	// prefers a small, cheap model.
+	reflectClient := agentClient
+	if cfg.Agent.ReflectModel != "" {
+		reflectClient = copilot.NewClient(githubToken, copilot.WithModel(cfg.Agent.ReflectModel))
 	}
+
+	// Memory semantics (dedup + ranking): with an embedding model configured, use
+	// embeddings and fall back to the small LLM when they're unavailable; without
+	// one, skip embeddings entirely and run memory purely on the LLM.
+	semantics := []agent.MemoSemantics{}
+	if cfg.Agent.EmbeddingModel != "" {
+		embedder := agent.NewCopilotEmbedder(agentClient, cfg.Agent.EmbeddingModel)
+		semantics = append(semantics, agent.NewEmbedSemantics(embedder))
+	}
+	semantics = append(semantics, agent.NewLLMSemantics(reflectClient))
+	memSem := agent.NewFallbackSemantics(semantics...)
+
+	structMem := agent.NewStoreStructuralMemory(store, memSem)
+	for _, t := range agent.StructuralMemoryTools(structMem) {
+		toolReg.Register(t)
+	}
+	reflector := agent.NewReflector(ctx, store, structMem, reflectClient, agent.ReflectorConfig{
+		IdleDelay:   time.Duration(cfg.Agent.ReflectIdleSeconds) * time.Second,
+		MinMessages: cfg.Agent.ReflectMinMessages,
+		SoftCap:     cfg.Agent.MemorySoftCap,
+	})
+	slog.Info("structural memory enabled")
 
 	engine := agent.NewEngine(agentClient, toolReg, skillMgr, store, agent.EngineConfig{
 		MaxIterations:    cfg.Agent.MaxIterations,

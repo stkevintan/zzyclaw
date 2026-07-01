@@ -6,7 +6,7 @@ import (
 )
 
 func TestStructMemUpsertMergeAndCategory(t *testing.T) {
-	m := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	m := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	ctx := context.Background()
 
 	if _, err := m.Upsert(ctx, "u1", CategoryPersonal, "prefers dark mode", "uses a dark theme"); err != nil {
@@ -27,7 +27,7 @@ func TestStructMemUpsertMergeAndCategory(t *testing.T) {
 }
 
 func TestStructMemDetailDeleteSearch(t *testing.T) {
-	m := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	m := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	ctx := context.Background()
 	e, _ := m.Upsert(ctx, "u1", CategoryProject, "go module zzy wechat bot", "go 1.25 project")
 	got, ok, _ := m.Detail(ctx, "u1", e.ID)
@@ -48,7 +48,7 @@ func TestStructMemDetailDeleteSearch(t *testing.T) {
 }
 
 func TestStructMemInjectPerCategory(t *testing.T) {
-	m := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	m := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	ctx := context.Background()
 	for _, cat := range memoryCategories {
 		for i := 0; i < 3; i++ {
@@ -64,7 +64,7 @@ func TestStructMemInjectPerCategory(t *testing.T) {
 }
 
 func TestStructMemUserIsolation(t *testing.T) {
-	m := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	m := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	ctx := context.Background()
 	mustUpsert(t, m, ctx, "u1", CategoryPersonal, "secret", "x")
 	if all, _ := m.List(ctx, "u2"); len(all) != 0 {
