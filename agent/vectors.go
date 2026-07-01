@@ -20,6 +20,34 @@ type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
+// RankItem is one candidate note: its Index (the short summary line) and, when
+// available, its precomputed embedding. Vector strategies use Vec (embedding only
+// the query, not every candidate); text/LLM strategies use Index.
+type RankItem struct {
+	Index string
+	Vec   []float32
+}
+
+// MemoSemantics is the single abstraction the memory store depends on for the
+// operations that would otherwise require a concrete embedder: detecting
+// duplicates and ranking by relevance. Implementations back these with
+// embeddings, an LLM, or a composite of both — merging the two strategies behind
+// one interface so the store never touches an Embedder itself.
+type MemoSemantics interface {
+	// Dedup decides whether note duplicates one of candidates: it returns the
+	// position of the candidate to merge into (or -1 to store separately) and the
+	// opaque vector to persist with note (nil when embeddings are unavailable).
+	// It encapsulates the strategy — embedding cosine or a small LLM — so callers
+	// never embed or compare vectors themselves. A non-nil error means it could
+	// not decide, so a composite can fall back to another strategy. Passing no
+	// candidates yields just the vector (match is always -1), which callers use to
+	// vectorize a note for storage.
+	Dedup(ctx context.Context, note string, candidates []RankItem) (match int, vec []float32, err error)
+	// Rank orders candidates by relevance to query, best first, up to n. It returns
+	// a non-nil error when it cannot rank (e.g. the query could not be embedded).
+	Rank(ctx context.Context, query string, candidates []RankItem, n int) ([]int, error)
+}
+
 // cosine returns the cosine similarity of a and b. Mismatched or empty vectors
 // score 0 so they never rank above a genuine match.
 func cosine(a, b []float32) float32 {

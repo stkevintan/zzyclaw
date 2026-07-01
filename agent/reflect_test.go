@@ -28,7 +28,7 @@ func newTestReflector(store Store, mem StructuralMemory, extract func(ctx contex
 }
 
 func TestReflectorRunsOnIdle(t *testing.T) {
-	mem := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	mem := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	store := NewInMemoryStore()
 	done := make(chan struct{}, 1)
 	r := newTestReflector(store, mem, func(_ context.Context, _, _ string) (reflectionResult, error) {
@@ -54,7 +54,7 @@ func TestReflectorRunsOnIdle(t *testing.T) {
 }
 
 func TestReflectorWatermarkSkipsUnchanged(t *testing.T) {
-	mem := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	mem := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	store := NewInMemoryStore()
 	var mu sync.Mutex
 	calls := 0
@@ -83,7 +83,7 @@ func TestReflectorWatermarkSkipsUnchanged(t *testing.T) {
 }
 
 func TestReflectorBelowMinMessages(t *testing.T) {
-	mem := NewStoreStructuralMemory(NewInMemoryStore(), fakeEmbedder{})
+	mem := NewStoreStructuralMemory(NewInMemoryStore(), NewEmbedSemantics(fakeEmbedder{}))
 	r := newTestReflector(NewInMemoryStore(), mem, func(context.Context, string, string) (reflectionResult, error) {
 		t.Fatal("extract should not be called below min messages")
 		return reflectionResult{}, nil

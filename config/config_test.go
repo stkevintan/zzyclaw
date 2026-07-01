@@ -22,7 +22,6 @@ func loadFromEmptyDir(t *testing.T) *Config {
 // because they are registered via SetDefault; AutomaticEnv silently stops
 // resolving them if those registrations are removed.
 func TestEnvBindsAgentScalars(t *testing.T) {
-	t.Setenv("ZZY_AGENT_MEMORY_ENABLED", "true")
 	t.Setenv("ZZY_AGENT_MEMORY_INJECT", "3")
 	t.Setenv("ZZY_AGENT_EMBEDDING_MODEL", "text-embedding-3-large")
 	t.Setenv("ZZY_AGENT_MODEL", "gpt-5")
@@ -32,9 +31,6 @@ func TestEnvBindsAgentScalars(t *testing.T) {
 
 	cfg := loadFromEmptyDir(t)
 
-	if !cfg.Agent.MemoryEnabled {
-		t.Errorf("MemoryEnabled = false, want true")
-	}
 	if cfg.Agent.MemoryInject != 3 {
 		t.Errorf("MemoryInject = %d, want 3", cfg.Agent.MemoryInject)
 	}
